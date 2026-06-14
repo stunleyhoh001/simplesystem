@@ -20,6 +20,9 @@ const STORAGE_KEY = "amsystemFirebaseFallback";
 const SYSTEM_DOC_PATH = ["amsystem", "main"];
 const USER_COLLECTION = "amsystemUsers";
 const CONFIRM_DAYS = 7;
+const ADMIN_EMAILS = [
+  "your-admin-email@gmail.com",
+];
 
 const firebaseConfig = {
   apiKey: "AIzaSyDvPQgQiMVSqTsSe00D75k8bwMoFTjm164",
@@ -79,11 +82,20 @@ function createSeedData() {
 async function loadState() {
   try {
     const snapshot = await getDoc(systemRef);
-    const usersSnapshot = await getDocs(usersRef);
     const seeded = createSeedData();
     cloudAvailable = true;
-    if (snapshot.exists() || !usersSnapshot.empty) {
-      return composeStateFromCloud(snapshot, usersSnapshot, seeded);
+    if (firebaseUser && isAdmin()) {
+      const usersSnapshot = await getDocs(usersRef);
+      if (snapshot.exists() || !usersSnapshot.empty) {
+        return composeStateFromCloud(snapshot, usersSnapshot, seeded);
+      }
+    }
+    if (firebaseUser) {
+      const userSnapshot = await getDoc(doc(db, USER_COLLECTION, firebaseUser.uid));
+      return composeStateFromUserDoc(snapshot, userSnapshot, seeded);
+    }
+    if (snapshot.exists()) {
+      return { ...seeded, plans: Array.isArray(snapshot.data().plans) ? snapshot.data().plans : seeded.plans };
     }
     return seeded;
   } catch (error) {
@@ -101,12 +113,18 @@ async function saveState() {
   }
   try {
     const cloudState = splitStateForCloud(state);
-    await setDoc(systemRef, { plans: cloudState.plans, updatedAt: serverTimestamp() });
-    await Promise.all(
-      cloudState.users.map((user) =>
-        setDoc(doc(db, USER_COLLECTION, user.id), { ...user, updatedAt: serverTimestamp() }, { merge: true })
-      )
-    );
+    if (isAdmin()) {
+      await setDoc(systemRef, { plans: cloudState.plans, updatedAt: serverTimestamp() });
+      await Promise.all(
+        cloudState.users.map((user) =>
+          setDoc(doc(db, USER_COLLECTION, user.id), { ...user, updatedAt: serverTimestamp() }, { merge: true })
+        )
+      );
+    } else {
+      const user = cloudState.users.find((item) => item.id === firebaseUser.uid);
+      if (!user) throw new Error("current-user-document-not-found");
+      await setDoc(doc(db, USER_COLLECTION, firebaseUser.uid), { ...user, updatedAt: serverTimestamp() }, { merge: true });
+    }
     cloudAvailable = true;
     syncMessage = `Firestore：保存成功 ${new Date().toLocaleTimeString("zh-CN")}`;
   } catch (error) {
@@ -132,20 +150,7 @@ function composeStateFromCloud(systemSnapshot, usersSnapshot, fallback) {
 
   usersSnapshot.forEach((snapshot) => {
     const data = snapshot.data();
-    users.push({
-      id: data.id || snapshot.id,
-      firebaseUid: data.firebaseUid || snapshot.id,
-      name: data.name || "未命名用户",
-      account: data.account || "",
-      photoURL: data.photoURL || "",
-      inviteCode: data.inviteCode || `${(data.name || "U").slice(0, 1).toUpperCase()}${snapshot.id.slice(0, 4)}`,
-      referrerId: data.referrerId || "",
-      level: data.level || "普通用户",
-      points: Number(data.points || 0),
-      slots: Number(data.slots || 0),
-      packageUntil: data.packageUntil || "",
-      frozen: Boolean(data.frozen),
-    });
+    users.push(normalizeUserDoc(snapshot.id, data));
     orders.push(...(Array.isArray(data.orders) ? data.orders : []));
     pointLogs.push(...(Array.isArray(data.pointLogs) ? data.pointLogs : []));
     rewards.push(...(Array.isArray(data.rewards) ? data.rewards : []));
@@ -160,6 +165,54 @@ function composeStateFromCloud(systemSnapshot, usersSnapshot, fallback) {
     pointLogs: pointLogs.length ? pointLogs : fallback.pointLogs,
     rewards: rewards.length ? rewards : fallback.rewards,
     withdraws: withdraws.length ? withdraws : fallback.withdraws,
+  };
+}
+
+function composeStateFromUserDoc(systemSnapshot, userSnapshot, fallback) {
+  const plans = systemSnapshot.exists() && Array.isArray(systemSnapshot.data().plans)
+    ? systemSnapshot.data().plans
+    : fallback.plans;
+
+  if (!userSnapshot.exists()) {
+    return {
+      ...fallback,
+      currentUserId: firebaseUser.uid,
+      plans,
+      users: [],
+      orders: [],
+      pointLogs: [],
+      rewards: [],
+      withdraws: [],
+    };
+  }
+
+  const data = userSnapshot.data();
+  const user = normalizeUserDoc(userSnapshot.id, data);
+  return {
+    currentUserId: user.id,
+    plans,
+    users: [user],
+    orders: Array.isArray(data.orders) ? data.orders : [],
+    pointLogs: Array.isArray(data.pointLogs) ? data.pointLogs : [],
+    rewards: Array.isArray(data.rewards) ? data.rewards : [],
+    withdraws: Array.isArray(data.withdraws) ? data.withdraws : [],
+  };
+}
+
+function normalizeUserDoc(id, data) {
+  return {
+    id: data.id || id,
+    firebaseUid: data.firebaseUid || id,
+    name: data.name || "未命名用户",
+    account: data.account || "",
+    photoURL: data.photoURL || "",
+    inviteCode: data.inviteCode || `${(data.name || "U").slice(0, 1).toUpperCase()}${id.slice(0, 4)}`,
+    referrerId: data.referrerId || "",
+    level: data.level || "普通用户",
+    points: Number(data.points || 0),
+    slots: Number(data.slots || 0),
+    packageUntil: data.packageUntil || "",
+    frozen: Boolean(data.frozen),
   };
 }
 
@@ -209,6 +262,10 @@ function findPlan(planId) {
 
 function currentUser() {
   return findUser(state.currentUserId) || state.users[0];
+}
+
+function isAdmin() {
+  return Boolean(firebaseUser?.email && ADMIN_EMAILS.includes(firebaseUser.email));
 }
 
 function directReferralCount(userId, data = state) {
@@ -477,15 +534,53 @@ function renderAdminWithdraws() {
   document.querySelector("#adminWithdrawTable").innerHTML = rows || `<tr><td colspan="8">暂无提现申请</td></tr>`;
 }
 
+function updateAuthStatusClean() {
+  const status = document.querySelector("#authStatus");
+  if (status) {
+    if (firebaseUser) {
+      status.textContent = `已登录：${firebaseUser.email || firebaseUser.displayName}${isAdmin() ? "（管理员）" : ""}`;
+    } else if (firebaseReady) {
+      status.textContent = "请使用 Google 登录。";
+    } else {
+      status.textContent = "正在连接 Firebase...";
+    }
+  }
+  const syncStatus = document.querySelector("#syncStatus");
+  if (syncStatus) syncStatus.textContent = syncMessage;
+}
+
+function renderAdminLocked() {
+  document.querySelector("#metricUsers").textContent = "-";
+  document.querySelector("#metricSales").textContent = "-";
+  document.querySelector("#metricPendingRewards").textContent = "-";
+  document.querySelector("#metricWithdraws").textContent = "-";
+  document.querySelector("#adminPlanList").innerHTML = `<article class="plan-card"><strong>后台已锁定</strong><span>请使用管理员 Google 邮箱登录。</span></article>`;
+  document.querySelector("#adminUserTable").innerHTML = `<tr><td colspan="9">无管理员权限</td></tr>`;
+  document.querySelector("#adminOrderTable").innerHTML = `<tr><td colspan="8">无管理员权限</td></tr>`;
+  document.querySelector("#adminRewardTable").innerHTML = `<tr><td colspan="8">无管理员权限</td></tr>`;
+  document.querySelector("#adminWithdrawTable").innerHTML = `<tr><td colspan="8">无管理员权限</td></tr>`;
+}
+
+function requireAdmin() {
+  if (isAdmin()) return true;
+  toast("只有管理员可以操作后台");
+  return false;
+}
+
 function renderAll() {
   if (!state) return;
-  updateAuthStatus();
+  updateAuthStatusClean();
   renderMember();
-  renderAdmin();
+  if (isAdmin()) {
+    renderAdmin();
+  } else {
+    renderAdminLocked();
+  }
 }
 
 document.querySelectorAll("[data-view]").forEach((button) => {
   button.addEventListener("click", () => {
+    if (button.dataset.view === "adminView" && !requireAdmin()) return;
     document.querySelectorAll("[data-view]").forEach((item) => item.classList.remove("active"));
     document.querySelectorAll(".view").forEach((item) => item.classList.remove("active"));
     button.classList.add("active");
@@ -546,6 +641,7 @@ document.querySelector("#registerForm").addEventListener("submit", async (event)
 
 document.querySelector("#planForm").addEventListener("submit", async (event) => {
   event.preventDefault();
+  if (!requireAdmin()) return;
   const form = new FormData(event.currentTarget);
   state.plans.push({
     id: id("plan"),
@@ -565,6 +661,7 @@ document.querySelector("#planForm").addEventListener("submit", async (event) => 
 
 document.querySelector("#pointsForm").addEventListener("submit", async (event) => {
   event.preventDefault();
+  if (!requireAdmin()) return;
   const form = new FormData(event.currentTarget);
   const user = findUser(form.get("userId"));
   const change = Number(form.get("points"));
@@ -590,6 +687,7 @@ document.querySelector("#withdrawForm").addEventListener("submit", async (event)
 });
 
 document.querySelector("#confirmDueBtn").addEventListener("click", async () => {
+  if (!requireAdmin()) return;
   let count = 0;
   state.rewards.forEach((reward) => {
     if (reward.status === "pending" && new Date(reward.confirmAfter) <= new Date()) {
@@ -621,6 +719,7 @@ document.body.addEventListener("click", async (event) => {
 
   const freezeUser = event.target.closest("[data-freeze-user]");
   if (freezeUser) {
+    if (!requireAdmin()) return;
     const user = findUser(freezeUser.dataset.freezeUser);
     user.frozen = !user.frozen;
     await saveState();
@@ -631,6 +730,7 @@ document.body.addEventListener("click", async (event) => {
 
   const rewardAction = event.target.closest("[data-confirm-reward], [data-cancel-reward], [data-freeze-reward]");
   if (rewardAction) {
+    if (!requireAdmin()) return;
     const rewardId = rewardAction.dataset.confirmReward || rewardAction.dataset.cancelReward || rewardAction.dataset.freezeReward;
     const reward = state.rewards.find((item) => item.id === rewardId);
     if (rewardAction.dataset.confirmReward) reward.status = "confirmed";
@@ -644,6 +744,7 @@ document.body.addEventListener("click", async (event) => {
 
   const withdrawAction = event.target.closest("[data-approve-withdraw], [data-reject-withdraw], [data-pay-withdraw]");
   if (withdrawAction) {
+    if (!requireAdmin()) return;
     const withdrawId = withdrawAction.dataset.approveWithdraw || withdrawAction.dataset.rejectWithdraw || withdrawAction.dataset.payWithdraw;
     const withdraw = state.withdraws.find((item) => item.id === withdrawId);
     if (withdrawAction.dataset.approveWithdraw) withdraw.status = "approved";

@@ -1,0 +1,25 @@
+rules_version = '2';
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+    function signedIn() {
+      return request.auth != null;
+    }
+
+    function isAdmin() {
+      return signedIn()
+        && request.auth.token.email in [
+          "your-admin-email@gmail.com"
+        ];
+    }
+
+    match /amsystem/{docId} {
+      allow read: if signedIn();
+      allow write: if isAdmin();
+    }
+
+    match /amsystemUsers/{userId} {
+      allow read, write: if isAdmin() || (signedIn() && request.auth.uid == userId);
+    }
+  }
+}
