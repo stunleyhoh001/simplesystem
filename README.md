@@ -57,7 +57,7 @@ rules_version = '2';
 
 service cloud.firestore {
   match /databases/{database}/documents {
-    match /affiliateSystems/{docId} {
+    match /amsystem/{docId} {
       allow read, write: if request.auth != null;
     }
   }
@@ -83,7 +83,7 @@ service cloud.firestore {
 当前版本为了快速演示，把系统数据保存到 Firestore：
 
 ```txt
-affiliateSystems/main
+amsystem/main
 ```
 
 正式上线建议下一步拆成独立集合：

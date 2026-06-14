@@ -14,8 +14,8 @@ import {
   setDoc,
 } from "https://www.gstatic.com/firebasejs/10.12.5/firebase-firestore.js";
 
-const STORAGE_KEY = "oneMinuteAffiliateFirebaseFallback";
-const SYSTEM_DOC_PATH = ["affiliateSystems", "main"];
+const STORAGE_KEY = "amsystemFirebaseFallback";
+const SYSTEM_DOC_PATH = ["amsystem", "main"];
 const CONFIRM_DAYS = 7;
 
 const firebaseConfig = {
@@ -577,7 +577,7 @@ document.querySelector("#exportBtn").addEventListener("click", () => {
   const url = URL.createObjectURL(blob);
   const link = document.createElement("a");
   link.href = url;
-  link.download = `affiliate-system-${new Date().toISOString().slice(0, 10)}.json`;
+  link.download = `amsystem-${new Date().toISOString().slice(0, 10)}.json`;
   link.click();
   URL.revokeObjectURL(url);
 });
