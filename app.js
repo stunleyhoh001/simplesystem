@@ -7,8 +7,10 @@ import {
   signOut,
 } from "https://www.gstatic.com/firebasejs/10.12.5/firebase-auth.js";
 import {
+  collection,
   doc,
   getDoc,
+  getDocs,
   getFirestore,
   serverTimestamp,
   setDoc,
@@ -16,6 +18,7 @@ import {
 
 const STORAGE_KEY = "amsystemFirebaseFallback";
 const SYSTEM_DOC_PATH = ["amsystem", "main"];
+const USER_COLLECTION = "amsystemUsers";
 const CONFIRM_DAYS = 7;
 
 const firebaseConfig = {
@@ -31,11 +34,13 @@ const app = initializeApp(firebaseConfig);
 const auth = getAuth(app);
 const db = getFirestore(app);
 const systemRef = doc(db, ...SYSTEM_DOC_PATH);
+const usersRef = collection(db, USER_COLLECTION);
 
 let firebaseReady = false;
 let cloudAvailable = false;
 let firebaseUser = null;
 let state = null;
+let syncMessage = "Firestore：等待检测";
 
 function futureDate(days) {
   const date = new Date();
@@ -74,13 +79,12 @@ function createSeedData() {
 async function loadState() {
   try {
     const snapshot = await getDoc(systemRef);
-    if (snapshot.exists()) {
-      cloudAvailable = true;
-      return snapshot.data().state;
-    }
+    const usersSnapshot = await getDocs(usersRef);
     const seeded = createSeedData();
-    await setDoc(systemRef, { state: seeded, updatedAt: serverTimestamp() });
     cloudAvailable = true;
+    if (snapshot.exists() || !usersSnapshot.empty) {
+      return composeStateFromCloud(snapshot, usersSnapshot, seeded);
+    }
     return seeded;
   } catch (error) {
     console.warn("Firestore unavailable, using local fallback.", error);
@@ -91,15 +95,85 @@ async function loadState() {
 
 async function saveState() {
   localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
-  if (!firebaseUser) return;
+  if (!firebaseUser) {
+    syncMessage = "Firestore：未登录，暂存本地";
+    return;
+  }
   try {
-    await setDoc(systemRef, { state, updatedAt: serverTimestamp() }, { merge: true });
+    const cloudState = splitStateForCloud(state);
+    await setDoc(systemRef, { plans: cloudState.plans, updatedAt: serverTimestamp() });
+    await Promise.all(
+      cloudState.users.map((user) =>
+        setDoc(doc(db, USER_COLLECTION, user.id), { ...user, updatedAt: serverTimestamp() }, { merge: true })
+      )
+    );
     cloudAvailable = true;
+    syncMessage = `Firestore：保存成功 ${new Date().toLocaleTimeString("zh-CN")}`;
   } catch (error) {
     cloudAvailable = false;
     console.warn("Firestore save failed, fallback remains local.", error);
-    toast("Firestore 保存失败，已暂存本地");
+    syncMessage = `Firestore：保存失败 ${error.code || error.name || "unknown"} - ${error.message || ""}`;
+    toast(`Firestore 保存失败：${error.code || "unknown"}`);
   }
+}
+
+function composeStateFromCloud(systemSnapshot, usersSnapshot, fallback) {
+  if (systemSnapshot.exists() && systemSnapshot.data().state && usersSnapshot.empty) {
+    return systemSnapshot.data().state;
+  }
+  const plans = systemSnapshot.exists() && Array.isArray(systemSnapshot.data().plans)
+    ? systemSnapshot.data().plans
+    : fallback.plans;
+  const users = [];
+  const orders = [];
+  const pointLogs = [];
+  const rewards = [];
+  const withdraws = [];
+
+  usersSnapshot.forEach((snapshot) => {
+    const data = snapshot.data();
+    users.push({
+      id: data.id || snapshot.id,
+      firebaseUid: data.firebaseUid || snapshot.id,
+      name: data.name || "未命名用户",
+      account: data.account || "",
+      photoURL: data.photoURL || "",
+      inviteCode: data.inviteCode || `${(data.name || "U").slice(0, 1).toUpperCase()}${snapshot.id.slice(0, 4)}`,
+      referrerId: data.referrerId || "",
+      level: data.level || "普通用户",
+      points: Number(data.points || 0),
+      slots: Number(data.slots || 0),
+      packageUntil: data.packageUntil || "",
+      frozen: Boolean(data.frozen),
+    });
+    orders.push(...(Array.isArray(data.orders) ? data.orders : []));
+    pointLogs.push(...(Array.isArray(data.pointLogs) ? data.pointLogs : []));
+    rewards.push(...(Array.isArray(data.rewards) ? data.rewards : []));
+    withdraws.push(...(Array.isArray(data.withdraws) ? data.withdraws : []));
+  });
+
+  return {
+    currentUserId: state?.currentUserId || firebaseUser?.uid || fallback.currentUserId,
+    plans,
+    users: users.length ? users : fallback.users,
+    orders: orders.length ? orders : fallback.orders,
+    pointLogs: pointLogs.length ? pointLogs : fallback.pointLogs,
+    rewards: rewards.length ? rewards : fallback.rewards,
+    withdraws: withdraws.length ? withdraws : fallback.withdraws,
+  };
+}
+
+function splitStateForCloud(data) {
+  return {
+    plans: data.plans,
+    users: data.users.map((user) => ({
+      ...user,
+      orders: data.orders.filter((order) => order.userId === user.id),
+      pointLogs: data.pointLogs.filter((log) => log.userId === user.id),
+      rewards: data.rewards.filter((reward) => reward.userId === user.id),
+      withdraws: data.withdraws.filter((withdraw) => withdraw.userId === user.id),
+    })),
+  };
 }
 
 function id(prefix) {
@@ -268,6 +342,8 @@ function updateAuthStatus() {
   } else {
     status.textContent = "正在连接 Firebase...";
   }
+  const syncStatus = document.querySelector("#syncStatus");
+  if (syncStatus) syncStatus.textContent = syncMessage;
 }
 
 function renderMember() {
@@ -444,6 +520,13 @@ document.querySelector("#firebaseLogoutBtn").addEventListener("click", async () 
   toast("已退出登录");
 });
 
+document.querySelector("#testFirestoreBtn").addEventListener("click", async () => {
+  if (!firebaseUser) return toast("请先使用 Google 登录");
+  state.lastSyncTestAt = new Date().toISOString();
+  await saveState();
+  renderAll();
+});
+
 document.querySelector("#registerForm").addEventListener("submit", async (event) => {
   event.preventDefault();
   const user = currentUser();
@@ -595,13 +678,11 @@ onAuthStateChanged(auth, async (user) => {
   if (!state) state = await loadState();
   if (user) {
     try {
-      const snapshot = await getDoc(systemRef);
-      if (snapshot.exists()) {
-        state = snapshot.data().state;
-        cloudAvailable = true;
-      }
+      state = await loadState();
+      cloudAvailable = true;
     } catch (error) {
       console.warn("Could not reload cloud state after login.", error);
+      syncMessage = `Firestore：读取失败 ${error.code || error.name || "unknown"} - ${error.message || ""}`;
     }
     upsertFirebaseUser(user);
     await saveState();

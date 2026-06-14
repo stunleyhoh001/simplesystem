@@ -60,6 +60,10 @@ service cloud.firestore {
     match /amsystem/{docId} {
       allow read, write: if request.auth != null;
     }
+
+    match /amsystemUsers/{userId} {
+      allow read, write: if request.auth != null;
+    }
   }
 }
 ```
@@ -80,15 +84,15 @@ service cloud.firestore {
 
 ## 当前技术说明
 
-当前版本为了快速演示，把系统数据保存到 Firestore：
+当前版本把系统设置和用户数据分开保存：
 
 ```txt
 amsystem/main
+amsystemUsers/{用户ID}
 ```
 
 正式上线建议下一步拆成独立集合：
 
-- users
 - plans
 - orders
 - rewards
