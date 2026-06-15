@@ -12,6 +12,7 @@ Firebase 版双界面联盟营销系统原型。
 - 后台确认付款后才发积分和奖励
 - 后台操作日志
 - 订单、奖励、提现、积分流水已拆成独立集合
+- Cloud Functions：已预留后端函数；当前可先用前端管理员确认付款 fallback
 
 ## 管理员邮箱
 
@@ -71,8 +72,59 @@ paymentProofs/{用户ID}/{文件名}
 
 ## 下一步建议
 
-1. 把奖励计算移到 Cloud Functions。
+1. 部署 Cloud Functions。
 2. 增加真实支付网关回调。
 3. 增加管理员操作日志导出。
 4. 增加订单、奖励、提现筛选。
 5. 增加手机端体验优化。
+
+## Cloud Functions（可选，正式上线再启用）
+
+已新增：
+
+```txt
+functions/index.js
+functions/package.json
+firebase.json
+.firebaserc
+```
+
+当前云函数：
+
+```txt
+confirmOrder
+```
+
+作用：
+
+- 只有管理员可以调用。
+- 确认待处理订单。
+- 发放积分。
+- 更新用户配套有效期。
+- 生成推荐奖励。
+- 写入积分流水。
+- 写入后台操作日志。
+
+部署前，请把 `functions/index.js` 里的：
+
+```txt
+your-admin-email@gmail.com
+```
+
+改成你的管理员邮箱。
+
+部署命令：
+
+```bash
+firebase deploy --only functions
+```
+
+如果你暂时不想升级 Blaze 方案，可以先不部署 Cloud Functions。
+
+当前系统会这样处理：
+
+1. 优先尝试调用 `confirmOrder` 云函数。
+2. 如果云函数未部署或不可用，管理员前端会 fallback 完成确认付款。
+3. 操作日志会标记为 `前端管理员确认`。
+
+这个 fallback 适合测试和内测。正式上线涉及真钱、积分和奖励时，建议再启用 Cloud Functions。
