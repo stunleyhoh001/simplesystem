@@ -1,150 +1,78 @@
 # 一分钟联盟营销系统
 
-这是一个 Firebase 版双界面联盟营销系统原型。
+Firebase 版双界面联盟营销系统原型。
 
-## 当前进度
+## 已完成
 
-- Firebase Authentication：Google 登录
-- Firestore：云端保存数据
-- 用户端：充值配套、推荐、奖励、提现
-- 后台端：配套、用户、订单、奖励、提现管理
-- 用户数据：已拆到 `amsystemUsers/{用户ID}`
-- 后台权限：只有配置的管理员邮箱可以进入后台
-- 充值流程：用户提交配套申请，后台确认付款后才发积分和奖励
-- 操作日志：后台关键操作会记录管理员、时间、动作和详情
-- 付款证明：用户可上传收据截图或 PDF，后台订单管理可查看凭证
+- Google 登录
+- 用户界面和后台界面
+- 管理员邮箱权限
+- Firestore 安全规则
+- Firebase Storage 付款证明上传
+- 后台确认付款后才发积分和奖励
+- 后台操作日志
+- 订单、奖励、提现、积分流水已拆成独立集合
 
-## 管理员邮箱设置
+## 管理员邮箱
 
-打开 `app.js`，找到：
-
-```js
-const ADMIN_EMAILS = [
-  "your-admin-email@gmail.com",
-];
-```
-
-把里面的邮箱改成你的 Google 登录邮箱，例如：
-
-```js
-const ADMIN_EMAILS = [
-  "yourname@gmail.com",
-];
-```
-
-如果有多个管理员：
-
-```js
-const ADMIN_EMAILS = [
-  "admin1@gmail.com",
-  "admin2@gmail.com",
-];
-```
-
-## Firestore 数据位置
-
-```txt
-amsystem/main
-amsystemUsers/{用户ID}
-```
-
-`amsystem/main` 保存系统配套规则。  
-`amsystem/main` 也保存后台操作日志。  
-`amsystemUsers/{用户ID}` 保存用户自己的资料、订单、奖励、提现、积分流水。
-
-## 安全版 Firestore Rules
-
-```txt
-rules_version = '2';
-
-service cloud.firestore {
-  match /databases/{database}/documents {
-    function signedIn() {
-      return request.auth != null;
-    }
-
-    function isAdmin() {
-      return signedIn()
-        && request.auth.token.email in [
-          "your-admin-email@gmail.com"
-        ];
-    }
-
-    match /amsystem/{docId} {
-      allow read: if signedIn();
-      allow write: if isAdmin();
-    }
-
-    match /amsystemUsers/{userId} {
-      allow read, write: if isAdmin() || (signedIn() && request.auth.uid == userId);
-    }
-  }
-}
-```
-
-把里面的 `your-admin-email@gmail.com` 改成你的管理员 Google 邮箱。  
-同样也要在 `app.js` 的 `ADMIN_EMAILS` 改成同一个邮箱。
-
-这个规则会做到：
-
-- 普通登录用户可以读取系统配套规则。
-- 普通登录用户只能读写自己的 `amsystemUsers/{uid}`。
-- 管理员可以管理所有用户数据和系统配套规则。
-
-## 下一步优先级
-
-1. 把 Firestore Rules 改成真正的管理员 / 用户隔离规则。
-2. 把订单、奖励、提现拆成独立集合。
-3. 把奖励计算移到 Cloud Functions。
-4. 把“模拟支付成功”改成“待支付订单 + 后台确认付款”。
-5. 增加管理员操作日志。
-
-## 后台操作日志
-
-系统会记录这些管理员动作：
-
-- 新增配套
-- 调整积分
-- 确认付款
-- 取消订单
-- 冻结 / 解冻用户
-- 确认 / 取消 / 冻结奖励
-- 审核提现
-
-日志保存在：
-
-```txt
-amsystem/main.adminLogs
-```
-
-## 充值订单流程
-
-当前流程已经改成：
-
-1. 用户填写付款方式、付款参考号和备注。
-2. 用户可上传付款证明，支持图片或 PDF，最大 5MB。
-3. 用户点击申请充值配套。
-4. 系统创建 `待处理` 订单。
-5. 后台管理员进入订单管理，核对付款资料和付款证明。
-6. 管理员点击 `确认付款`。
-7. 系统才发放积分、更新配套有效期、生成推荐奖励。
-
-管理员也可以对待处理订单点击 `取消订单`。
-
-## Firebase Storage 设置
-
-付款证明保存在 Firebase Storage：
-
-```txt
-paymentProofs/{用户ID}/{文件名}
-```
-
-请在 Firebase Console 开启 Storage，并把 `storage.rules` 的内容发布到 Storage Rules。
-
-同样要把规则里的：
+在 `app.js` 和 `firestore.rules`、`storage.rules` 里，把：
 
 ```txt
 your-admin-email@gmail.com
 ```
 
 改成你的管理员 Google 邮箱。
+
+## Firestore 结构
+
+```txt
+amsystem/main
+amsystemUsers/{用户ID}
+amsystemOrders/{订单ID}
+amsystemRewards/{奖励ID}
+amsystemWithdraws/{提现ID}
+amsystemPointLogs/{流水ID}
+amsystemAdminLogs/{日志ID}
+```
+
+说明：
+
+- `amsystem/main`：系统配套规则。
+- `amsystemUsers`：用户资料。
+- `amsystemOrders`：充值订单。
+- `amsystemRewards`：奖励记录。
+- `amsystemWithdraws`：提现申请。
+- `amsystemPointLogs`：积分流水。
+- `amsystemAdminLogs`：后台操作日志，只允许管理员读取。
+
+## Firestore Rules
+
+把 `firestore.rules` 的内容复制到 Firebase Console 的 Firestore Rules 并发布。
+
+## Storage Rules
+
+付款证明保存在：
+
+```txt
+paymentProofs/{用户ID}/{文件名}
+```
+
+把 `storage.rules` 的内容复制到 Firebase Console 的 Storage Rules 并发布。
+
+## 充值订单流程
+
+1. 用户填写付款方式、付款参考号和备注。
+2. 用户上传付款证明，支持图片或 PDF，最大 5MB。
+3. 用户点击申请充值配套。
+4. 系统创建待处理订单。
+5. 管理员进入后台订单管理，核对付款资料和凭证。
+6. 管理员确认付款。
+7. 系统发积分、更新配套有效期、生成推荐奖励。
+
+## 下一步建议
+
+1. 把奖励计算移到 Cloud Functions。
+2. 增加真实支付网关回调。
+3. 增加管理员操作日志导出。
+4. 增加订单、奖励、提现筛选。
+5. 增加手机端体验优化。

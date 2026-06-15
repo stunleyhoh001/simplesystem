@@ -21,5 +21,29 @@ service cloud.firestore {
     match /amsystemUsers/{userId} {
       allow read, write: if isAdmin() || (signedIn() && request.auth.uid == userId);
     }
+
+    match /amsystemOrders/{orderId} {
+      allow read, write: if isAdmin() || (signedIn() && request.auth.uid == resource.data.userId);
+      allow create: if signedIn() && request.auth.uid == request.resource.data.userId;
+    }
+
+    match /amsystemWithdraws/{withdrawId} {
+      allow read, write: if isAdmin() || (signedIn() && request.auth.uid == resource.data.userId);
+      allow create: if signedIn() && request.auth.uid == request.resource.data.userId;
+    }
+
+    match /amsystemRewards/{rewardId} {
+      allow read: if isAdmin() || (signedIn() && request.auth.uid == resource.data.userId);
+      allow write: if isAdmin();
+    }
+
+    match /amsystemPointLogs/{logId} {
+      allow read: if isAdmin() || (signedIn() && request.auth.uid == resource.data.userId);
+      allow write: if isAdmin();
+    }
+
+    match /amsystemAdminLogs/{logId} {
+      allow read, write: if isAdmin();
+    }
   }
 }

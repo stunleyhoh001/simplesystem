@@ -12,8 +12,10 @@ import {
   getDoc,
   getDocs,
   getFirestore,
+  query,
   serverTimestamp,
   setDoc,
+  where,
 } from "https://www.gstatic.com/firebasejs/10.12.5/firebase-firestore.js";
 import {
   getDownloadURL,
@@ -25,6 +27,11 @@ import {
 const STORAGE_KEY = "amsystemFirebaseFallback";
 const SYSTEM_DOC_PATH = ["amsystem", "main"];
 const USER_COLLECTION = "amsystemUsers";
+const ORDER_COLLECTION = "amsystemOrders";
+const REWARD_COLLECTION = "amsystemRewards";
+const WITHDRAW_COLLECTION = "amsystemWithdraws";
+const POINT_LOG_COLLECTION = "amsystemPointLogs";
+const ADMIN_LOG_COLLECTION = "amsystemAdminLogs";
 const CONFIRM_DAYS = 7;
 const ADMIN_EMAILS = [
   "your-admin-email@gmail.com",
@@ -45,6 +52,11 @@ const db = getFirestore(app);
 const storage = getStorage(app);
 const systemRef = doc(db, ...SYSTEM_DOC_PATH);
 const usersRef = collection(db, USER_COLLECTION);
+const ordersRef = collection(db, ORDER_COLLECTION);
+const rewardsRef = collection(db, REWARD_COLLECTION);
+const withdrawsRef = collection(db, WITHDRAW_COLLECTION);
+const pointLogsRef = collection(db, POINT_LOG_COLLECTION);
+const adminLogsRef = collection(db, ADMIN_LOG_COLLECTION);
 
 let firebaseReady = false;
 let cloudAvailable = false;
@@ -94,19 +106,32 @@ async function loadState() {
     cloudAvailable = true;
     if (firebaseUser && isAdmin()) {
       const usersSnapshot = await getDocs(usersRef);
+      const records = {
+        orders: snapshotDocs(await getDocs(ordersRef)),
+        rewards: snapshotDocs(await getDocs(rewardsRef)),
+        withdraws: snapshotDocs(await getDocs(withdrawsRef)),
+        pointLogs: snapshotDocs(await getDocs(pointLogsRef)),
+        adminLogs: snapshotDocs(await getDocs(adminLogsRef)),
+      };
       if (snapshot.exists() || !usersSnapshot.empty) {
-        return composeStateFromCloud(snapshot, usersSnapshot, seeded);
+        return composeStateFromCloud(snapshot, usersSnapshot, seeded, records);
       }
     }
     if (firebaseUser) {
       const userSnapshot = await getDoc(doc(db, USER_COLLECTION, firebaseUser.uid));
-      return composeStateFromUserDoc(snapshot, userSnapshot, seeded);
+      const records = {
+        orders: snapshotDocs(await getDocs(query(ordersRef, where("userId", "==", firebaseUser.uid)))),
+        rewards: snapshotDocs(await getDocs(query(rewardsRef, where("userId", "==", firebaseUser.uid)))),
+        withdraws: snapshotDocs(await getDocs(query(withdrawsRef, where("userId", "==", firebaseUser.uid)))),
+        pointLogs: snapshotDocs(await getDocs(query(pointLogsRef, where("userId", "==", firebaseUser.uid)))),
+      };
+      return composeStateFromUserDoc(snapshot, userSnapshot, seeded, records);
     }
     if (snapshot.exists()) {
       return {
         ...seeded,
         plans: Array.isArray(snapshot.data().plans) ? snapshot.data().plans : seeded.plans,
-        adminLogs: Array.isArray(snapshot.data().adminLogs) ? snapshot.data().adminLogs : [],
+        adminLogs: [],
       };
     }
     return seeded;
@@ -126,16 +151,41 @@ async function saveState() {
   try {
     const cloudState = splitStateForCloud(state);
     if (isAdmin()) {
-      await setDoc(systemRef, { plans: cloudState.plans, adminLogs: data.adminLogs || [], updatedAt: serverTimestamp() });
+      await setDoc(systemRef, { plans: cloudState.plans, updatedAt: serverTimestamp() });
       await Promise.all(
-        cloudState.users.map((user) =>
-          setDoc(doc(db, USER_COLLECTION, user.id), { ...user, updatedAt: serverTimestamp() }, { merge: true })
-        )
+        [
+          ...cloudState.users.map((user) =>
+            setDoc(doc(db, USER_COLLECTION, user.id), { ...user, updatedAt: serverTimestamp() }, { merge: true })
+          ),
+          ...cloudState.orders.map((order) =>
+            setDoc(doc(db, ORDER_COLLECTION, order.id), { ...order, updatedAt: serverTimestamp() }, { merge: true })
+          ),
+          ...cloudState.rewards.map((reward) =>
+            setDoc(doc(db, REWARD_COLLECTION, reward.id), { ...reward, updatedAt: serverTimestamp() }, { merge: true })
+          ),
+          ...cloudState.withdraws.map((withdraw) =>
+            setDoc(doc(db, WITHDRAW_COLLECTION, withdraw.id), { ...withdraw, updatedAt: serverTimestamp() }, { merge: true })
+          ),
+          ...cloudState.pointLogs.map((log) =>
+            setDoc(doc(db, POINT_LOG_COLLECTION, log.id), { ...log, updatedAt: serverTimestamp() }, { merge: true })
+          ),
+          ...(cloudState.adminLogs || []).map((log) =>
+            setDoc(doc(db, ADMIN_LOG_COLLECTION, log.id), { ...log, updatedAt: serverTimestamp() }, { merge: true })
+          ),
+        ]
       );
     } else {
       const user = cloudState.users.find((item) => item.id === firebaseUser.uid);
       if (!user) throw new Error("current-user-document-not-found");
-      await setDoc(doc(db, USER_COLLECTION, firebaseUser.uid), { ...user, updatedAt: serverTimestamp() }, { merge: true });
+      await Promise.all([
+        setDoc(doc(db, USER_COLLECTION, firebaseUser.uid), { ...user, updatedAt: serverTimestamp() }, { merge: true }),
+        ...cloudState.orders.filter((order) => order.userId === firebaseUser.uid).map((order) =>
+          setDoc(doc(db, ORDER_COLLECTION, order.id), { ...order, updatedAt: serverTimestamp() }, { merge: true })
+        ),
+        ...cloudState.withdraws.filter((withdraw) => withdraw.userId === firebaseUser.uid).map((withdraw) =>
+          setDoc(doc(db, WITHDRAW_COLLECTION, withdraw.id), { ...withdraw, updatedAt: serverTimestamp() }, { merge: true })
+        ),
+      ]);
     }
     cloudAvailable = true;
     syncMessage = `Firestore：保存成功 ${new Date().toLocaleTimeString("zh-CN")}`;
@@ -147,7 +197,11 @@ async function saveState() {
   }
 }
 
-function composeStateFromCloud(systemSnapshot, usersSnapshot, fallback) {
+function snapshotDocs(snapshot) {
+  return snapshot.docs.map((item) => ({ id: item.id, ...item.data() }));
+}
+
+function composeStateFromCloud(systemSnapshot, usersSnapshot, fallback, records = {}) {
   if (systemSnapshot.exists() && systemSnapshot.data().state && usersSnapshot.empty) {
     return systemSnapshot.data().state;
   }
@@ -155,18 +209,18 @@ function composeStateFromCloud(systemSnapshot, usersSnapshot, fallback) {
     ? systemSnapshot.data().plans
     : fallback.plans;
   const users = [];
-  const orders = [];
-  const pointLogs = [];
-  const rewards = [];
-  const withdraws = [];
+  const orders = [...(records.orders || [])];
+  const pointLogs = [...(records.pointLogs || [])];
+  const rewards = [...(records.rewards || [])];
+  const withdraws = [...(records.withdraws || [])];
 
   usersSnapshot.forEach((snapshot) => {
     const data = snapshot.data();
     users.push(normalizeUserDoc(snapshot.id, data));
-    orders.push(...(Array.isArray(data.orders) ? data.orders : []));
-    pointLogs.push(...(Array.isArray(data.pointLogs) ? data.pointLogs : []));
-    rewards.push(...(Array.isArray(data.rewards) ? data.rewards : []));
-    withdraws.push(...(Array.isArray(data.withdraws) ? data.withdraws : []));
+    if (!records.orders?.length) orders.push(...(Array.isArray(data.orders) ? data.orders : []));
+    if (!records.pointLogs?.length) pointLogs.push(...(Array.isArray(data.pointLogs) ? data.pointLogs : []));
+    if (!records.rewards?.length) rewards.push(...(Array.isArray(data.rewards) ? data.rewards : []));
+    if (!records.withdraws?.length) withdraws.push(...(Array.isArray(data.withdraws) ? data.withdraws : []));
   });
 
   return {
@@ -177,11 +231,11 @@ function composeStateFromCloud(systemSnapshot, usersSnapshot, fallback) {
     pointLogs: pointLogs.length ? pointLogs : fallback.pointLogs,
     rewards: rewards.length ? rewards : fallback.rewards,
     withdraws: withdraws.length ? withdraws : fallback.withdraws,
-    adminLogs: systemSnapshot.exists() && Array.isArray(systemSnapshot.data().adminLogs) ? systemSnapshot.data().adminLogs : [],
+    adminLogs: records.adminLogs || [],
   };
 }
 
-function composeStateFromUserDoc(systemSnapshot, userSnapshot, fallback) {
+function composeStateFromUserDoc(systemSnapshot, userSnapshot, fallback, records = {}) {
   const plans = systemSnapshot.exists() && Array.isArray(systemSnapshot.data().plans)
     ? systemSnapshot.data().plans
     : fallback.plans;
@@ -192,10 +246,10 @@ function composeStateFromUserDoc(systemSnapshot, userSnapshot, fallback) {
       currentUserId: firebaseUser.uid,
       plans,
       users: [],
-      orders: [],
-      pointLogs: [],
-      rewards: [],
-      withdraws: [],
+      orders: records.orders || [],
+      pointLogs: records.pointLogs || [],
+      rewards: records.rewards || [],
+      withdraws: records.withdraws || [],
     };
   }
 
@@ -205,11 +259,11 @@ function composeStateFromUserDoc(systemSnapshot, userSnapshot, fallback) {
     currentUserId: user.id,
     plans,
     users: [user],
-    orders: Array.isArray(data.orders) ? data.orders : [],
-    pointLogs: Array.isArray(data.pointLogs) ? data.pointLogs : [],
-    rewards: Array.isArray(data.rewards) ? data.rewards : [],
-    withdraws: Array.isArray(data.withdraws) ? data.withdraws : [],
-    adminLogs: systemSnapshot.exists() && Array.isArray(systemSnapshot.data().adminLogs) ? systemSnapshot.data().adminLogs : [],
+    orders: records.orders?.length ? records.orders : (Array.isArray(data.orders) ? data.orders : []),
+    pointLogs: records.pointLogs?.length ? records.pointLogs : (Array.isArray(data.pointLogs) ? data.pointLogs : []),
+    rewards: records.rewards?.length ? records.rewards : (Array.isArray(data.rewards) ? data.rewards : []),
+    withdraws: records.withdraws?.length ? records.withdraws : (Array.isArray(data.withdraws) ? data.withdraws : []),
+    adminLogs: [],
   };
 }
 
@@ -234,14 +288,17 @@ function splitStateForCloud(data) {
   return {
     plans: data.plans,
     adminLogs: data.adminLogs || [],
-    users: data.users.map((user) => ({
-      ...user,
-      orders: data.orders.filter((order) => order.userId === user.id),
-      pointLogs: data.pointLogs.filter((log) => log.userId === user.id),
-      rewards: data.rewards.filter((reward) => reward.userId === user.id),
-      withdraws: data.withdraws.filter((withdraw) => withdraw.userId === user.id),
-    })),
+    users: data.users.map(userProfileForCloud),
+    orders: data.orders || [],
+    rewards: data.rewards || [],
+    withdraws: data.withdraws || [],
+    pointLogs: data.pointLogs || [],
   };
+}
+
+function userProfileForCloud(user) {
+  const { orders, rewards, withdraws, pointLogs, ...profile } = user;
+  return profile;
 }
 
 function id(prefix) {
