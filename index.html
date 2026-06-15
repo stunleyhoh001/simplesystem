@@ -59,6 +59,26 @@
         </nav>
 
         <section id="memberPlans" class="tab-panel active">
+          <div class="panel">
+            <div class="panel-head">
+              <div>
+                <h2>付款资料</h2>
+                <p>申请充值配套前，请填写付款方式和参考号，方便后台核对。</p>
+              </div>
+            </div>
+            <form id="paymentInfoForm" class="grid-form compact">
+              <label>付款方式
+                <select name="paymentMethod">
+                  <option value="bank">银行转账</option>
+                  <option value="tng">Touch n Go</option>
+                  <option value="usdt">USDT</option>
+                  <option value="cash">现金</option>
+                </select>
+              </label>
+              <label>付款参考号<input name="paymentRef" placeholder="交易编号 / 收据编号" /></label>
+              <label>备注<input name="paymentNote" placeholder="例如付款人姓名、银行名称" /></label>
+            </form>
+          </div>
           <div class="plan-grid" id="memberPlanCards"></div>
           <div class="panel">
             <div class="panel-head"><h2>我的充值订单</h2></div>
@@ -191,7 +211,7 @@
                 <div class="panel-head"><h2>订单管理</h2></div>
                 <div class="table-wrap">
                   <table>
-                    <thead><tr><th>订单号</th><th>用户</th><th>配套</th><th>类型</th><th>金额</th><th>积分</th><th>状态</th><th>时间</th><th>操作</th></tr></thead>
+                    <thead><tr><th>订单号</th><th>用户</th><th>配套</th><th>类型</th><th>金额</th><th>付款资料</th><th>积分</th><th>状态</th><th>时间</th><th>操作</th></tr></thead>
                     <tbody id="adminOrderTable"></tbody>
                   </table>
                 </div>

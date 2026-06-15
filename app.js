@@ -292,7 +292,7 @@ function confirmedAvailable(userId) {
   return Math.max(confirmed - requested, 0);
 }
 
-function createOrder(data, userId, planId, type, status = "paid", createdAt = new Date().toISOString()) {
+function createOrder(data, userId, planId, type, status = "paid", createdAt = new Date().toISOString(), paymentInfo = {}) {
   const user = data.users.find((item) => item.id === userId);
   const plan = data.plans.find((item) => item.id === planId);
   if (!user || !plan) return null;
@@ -304,6 +304,9 @@ function createOrder(data, userId, planId, type, status = "paid", createdAt = ne
     status,
     amount: plan.amount,
     points: 0,
+    paymentMethod: paymentInfo.method || "",
+    paymentRef: paymentInfo.ref || "",
+    paymentNote: paymentInfo.note || "",
     createdAt,
   };
   data.orders.push(order);
@@ -361,6 +364,15 @@ function labelStatus(status) {
     rejected: "已拒绝",
     paidout: "已打款",
   }[status] || status;
+}
+
+function paymentMethodText(method) {
+  return {
+    bank: "银行转账",
+    tng: "Touch n Go",
+    usdt: "USDT",
+    cash: "现金",
+  }[method] || method || "";
 }
 
 function toast(message) {
@@ -525,7 +537,8 @@ function renderAdminOrders() {
     const actions = order.status === "pending"
       ? `<button class="link" data-confirm-order="${order.id}">确认付款</button><button class="link" data-cancel-order="${order.id}">取消订单</button>`
       : "";
-    return `<tr><td>${order.id}</td><td>${user?.name || "-"}</td><td>${plan?.name || "-"}</td><td>${order.type === "first" ? "首充" : "复购"}</td><td>${money(order.amount)}</td><td>${points(order.points)}</td><td><span class="tag ${order.status}">${labelStatus(order.status)}</span></td><td>${new Date(order.createdAt).toLocaleString("zh-CN")}</td><td class="actions">${actions}</td></tr>`;
+    const paymentText = `${paymentMethodText(order.paymentMethod)} ${order.paymentRef || ""}${order.paymentNote ? ` / ${order.paymentNote}` : ""}`.trim() || "-";
+    return `<tr><td>${order.id}</td><td>${user?.name || "-"}</td><td>${plan?.name || "-"}</td><td>${order.type === "first" ? "首充" : "复购"}</td><td>${money(order.amount)}</td><td>${paymentText}</td><td>${points(order.points)}</td><td><span class="tag ${order.status}">${labelStatus(order.status)}</span></td><td>${new Date(order.createdAt).toLocaleString("zh-CN")}</td><td class="actions">${actions}</td></tr>`;
   }).join("");
 }
 
@@ -569,7 +582,7 @@ function renderAdminLocked() {
   document.querySelector("#metricWithdraws").textContent = "-";
   document.querySelector("#adminPlanList").innerHTML = `<article class="plan-card"><strong>后台已锁定</strong><span>请使用管理员 Google 邮箱登录。</span></article>`;
   document.querySelector("#adminUserTable").innerHTML = `<tr><td colspan="9">无管理员权限</td></tr>`;
-  document.querySelector("#adminOrderTable").innerHTML = `<tr><td colspan="9">无管理员权限</td></tr>`;
+  document.querySelector("#adminOrderTable").innerHTML = `<tr><td colspan="10">无管理员权限</td></tr>`;
   document.querySelector("#adminRewardTable").innerHTML = `<tr><td colspan="8">无管理员权限</td></tr>`;
   document.querySelector("#adminWithdrawTable").innerHTML = `<tr><td colspan="8">无管理员权限</td></tr>`;
 }
@@ -717,7 +730,14 @@ document.body.addEventListener("click", async (event) => {
   const buyPlan = event.target.closest("[data-buy-plan]");
   if (buyPlan) {
     if (!firebaseUser) return toast("请先使用 Google 登录");
-    createOrder(state, currentUser().id, buyPlan.dataset.buyPlan, buyPlan.dataset.buyType, "pending");
+    const paymentForm = new FormData(document.querySelector("#paymentInfoForm"));
+    const paymentInfo = {
+      method: paymentForm.get("paymentMethod"),
+      ref: paymentForm.get("paymentRef").trim(),
+      note: paymentForm.get("paymentNote").trim(),
+    };
+    if (!paymentInfo.ref) return toast("请先填写付款参考号");
+    createOrder(state, currentUser().id, buyPlan.dataset.buyPlan, buyPlan.dataset.buyType, "pending", new Date().toISOString(), paymentInfo);
     await saveState();
     renderAll();
     toast("配套申请已提交，等待后台确认付款");
