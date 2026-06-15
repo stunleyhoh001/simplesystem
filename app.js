@@ -23,6 +23,10 @@ import {
   ref as storageRef,
   uploadBytes,
 } from "https://www.gstatic.com/firebasejs/10.12.5/firebase-storage.js";
+import {
+  getFunctions,
+  httpsCallable,
+} from "https://www.gstatic.com/firebasejs/10.12.5/firebase-functions.js";
 
 const STORAGE_KEY = "amsystemFirebaseFallback";
 const SYSTEM_DOC_PATH = ["amsystem", "main"];
@@ -50,6 +54,8 @@ const app = initializeApp(firebaseConfig);
 const auth = getAuth(app);
 const db = getFirestore(app);
 const storage = getStorage(app);
+const functions = getFunctions(app);
+const confirmOrderFunction = httpsCallable(functions, "confirmOrder");
 const systemRef = doc(db, ...SYSTEM_DOC_PATH);
 const usersRef = collection(db, USER_COLLECTION);
 const ordersRef = collection(db, ORDER_COLLECTION);
@@ -889,11 +895,15 @@ document.body.addEventListener("click", async (event) => {
     if (!requireAdmin()) return;
     const order = state.orders.find((item) => item.id === confirmOrder.dataset.confirmOrder);
     if (!order || order.status !== "pending") return toast("订单状态不可确认");
-    applyPaidOrder(state, order);
-    addAdminLog("确认付款", order.id, `金额 ${money(order.amount)}`);
-    await saveState();
-    renderAll();
-    toast("订单已确认付款，积分和奖励已生成");
+    try {
+      await confirmOrderFunction({ orderId: order.id });
+      state = await loadState();
+      renderAll();
+      toast("订单已由云函数确认，积分和奖励已生成");
+    } catch (error) {
+      console.error(error);
+      toast(`云函数确认失败：${error.code || "请先部署 functions"}`);
+    }
     return;
   }
 
