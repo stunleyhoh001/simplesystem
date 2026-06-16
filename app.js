@@ -791,7 +791,7 @@ function renderAdminWithdraws() {
     const user = findUser(item.userId);
     return `<tr><td>${item.id}</td><td>${user?.name || "-"}</td><td>${money(item.amount)}</td><td>${item.method}</td><td>${item.account}</td><td><span class="tag ${item.status}">${labelStatus(item.status)}</span></td><td>${new Date(item.createdAt).toLocaleString("zh-CN")}</td><td class="actions">${item.status === "pending" ? `<button class="link" data-approve-withdraw="${item.id}">通过</button><button class="link" data-reject-withdraw="${item.id}">拒绝</button>` : ""}${item.status === "approved" ? `<button class="link" data-pay-withdraw="${item.id}">标记打款</button>` : ""}</td></tr>`;
   }).join("");
-  document.querySelector("#adminWithdrawTable").innerHTML = rows || `<tr><td colspan="8">暂无提现申请</td></tr>`;
+  document.querySelector("#adminWithdrawTable").innerHTML = rows || `<tr><td colspan="8">没有符合条件的提现申请</td></tr>`;
 }
 
 function getSelectValue(selector, fallback) {
@@ -926,8 +926,26 @@ function filteredRewards() {
 }
 
 function filteredWithdraws() {
+  const keyword = getInputValue("#withdrawSearchInput").toLowerCase();
   const statusFilter = getSelectValue("#withdrawStatusFilter", "all");
-  return state.withdraws.filter((item) => statusFilter === "all" || item.status === statusFilter);
+  const minAmount = Number(getInputValue("#withdrawMinAmount") || 0);
+
+  return state.withdraws.filter((item) => {
+    const user = findUser(item.userId);
+    const searchable = [
+      item.id,
+      user?.name,
+      user?.account,
+      user?.phone,
+      user?.inviteCode,
+      item.method,
+      item.account,
+    ].join(" ").toLowerCase();
+    const matchesKeyword = !keyword || searchable.includes(keyword);
+    const matchesStatus = statusFilter === "all" || item.status === statusFilter;
+    const matchesAmount = !minAmount || Number(item.amount || 0) >= minAmount;
+    return matchesKeyword && matchesStatus && matchesAmount;
+  });
 }
 
 function updateAuthStatusClean() {
@@ -1006,6 +1024,8 @@ document.querySelectorAll(".tabs").forEach((tabs) => {
 document.querySelector("#userSearchInput")?.addEventListener("input", renderAll);
 document.querySelector("#orderSearchInput")?.addEventListener("input", renderAll);
 document.querySelector("#rewardSearchInput")?.addEventListener("input", renderAll);
+document.querySelector("#withdrawSearchInput")?.addEventListener("input", renderAll);
+document.querySelector("#withdrawMinAmount")?.addEventListener("input", renderAll);
 
 document.querySelector("#clearUserFiltersBtn")?.addEventListener("click", () => {
   const searchInput = document.querySelector("#userSearchInput");
@@ -1034,6 +1054,16 @@ document.querySelector("#clearRewardFiltersBtn")?.addEventListener("click", () =
   if (searchInput) searchInput.value = "";
   if (statusFilter) statusFilter.value = "all";
   if (typeFilter) typeFilter.value = "all";
+  renderAll();
+});
+
+document.querySelector("#clearWithdrawFiltersBtn")?.addEventListener("click", () => {
+  const searchInput = document.querySelector("#withdrawSearchInput");
+  const statusFilter = document.querySelector("#withdrawStatusFilter");
+  const minAmountInput = document.querySelector("#withdrawMinAmount");
+  if (searchInput) searchInput.value = "";
+  if (statusFilter) statusFilter.value = "all";
+  if (minAmountInput) minAmountInput.value = "";
   renderAll();
 });
 
