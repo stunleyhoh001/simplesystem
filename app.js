@@ -782,7 +782,7 @@ function renderAdminRewards() {
     const canConfirm = reward.status === "pending" && new Date(reward.confirmAfter) <= new Date();
     return `<tr><td>${user?.name || "-"}</td><td>${sourceUser?.name || "-"}</td><td>${reward.orderId}</td><td>${reward.type === "first" ? "首充" : "复购"}</td><td>${money(reward.amount)}</td><td><span class="tag ${reward.status}">${labelStatus(reward.status)}</span></td><td>${new Date(reward.confirmAfter).toLocaleDateString("zh-CN")}</td><td class="actions">${canConfirm ? `<button class="link" data-confirm-reward="${reward.id}">确认</button>` : ""}${reward.status === "pending" ? `<button class="link" data-cancel-reward="${reward.id}">取消</button><button class="link" data-freeze-reward="${reward.id}">冻结</button>` : ""}</td></tr>`;
   }).join("");
-  document.querySelector("#adminRewardTable").innerHTML = rows || `<tr><td colspan="8">暂无奖励</td></tr>`;
+  document.querySelector("#adminRewardTable").innerHTML = rows || `<tr><td colspan="8">没有符合条件的奖励</td></tr>`;
 }
 
 function renderAdminWithdraws() {
@@ -901,8 +901,28 @@ function filteredUsers() {
 }
 
 function filteredRewards() {
+  const keyword = getInputValue("#rewardSearchInput").toLowerCase();
   const statusFilter = getSelectValue("#rewardStatusFilter", "all");
-  return state.rewards.filter((reward) => statusFilter === "all" || reward.status === statusFilter);
+  const typeFilter = getSelectValue("#rewardTypeFilter", "all");
+
+  return state.rewards.filter((reward) => {
+    const user = findUser(reward.userId);
+    const sourceUser = findUser(reward.sourceUserId);
+    const searchable = [
+      reward.id,
+      reward.orderId,
+      user?.name,
+      user?.account,
+      user?.phone,
+      sourceUser?.name,
+      sourceUser?.account,
+      sourceUser?.phone,
+    ].join(" ").toLowerCase();
+    const matchesKeyword = !keyword || searchable.includes(keyword);
+    const matchesStatus = statusFilter === "all" || reward.status === statusFilter;
+    const matchesType = typeFilter === "all" || reward.type === typeFilter;
+    return matchesKeyword && matchesStatus && matchesType;
+  });
 }
 
 function filteredWithdraws() {
@@ -979,12 +999,13 @@ document.querySelectorAll(".tabs").forEach((tabs) => {
   });
 });
 
-["#orderStatusFilter", "#orderTypeFilter", "#rewardStatusFilter", "#withdrawStatusFilter", "#userPackageFilter", "#userAccountFilter"].forEach((selector) => {
+["#orderStatusFilter", "#orderTypeFilter", "#rewardStatusFilter", "#rewardTypeFilter", "#withdrawStatusFilter", "#userPackageFilter", "#userAccountFilter"].forEach((selector) => {
   document.querySelector(selector)?.addEventListener("change", renderAll);
 });
 
 document.querySelector("#userSearchInput")?.addEventListener("input", renderAll);
 document.querySelector("#orderSearchInput")?.addEventListener("input", renderAll);
+document.querySelector("#rewardSearchInput")?.addEventListener("input", renderAll);
 
 document.querySelector("#clearUserFiltersBtn")?.addEventListener("click", () => {
   const searchInput = document.querySelector("#userSearchInput");
@@ -1000,6 +1021,16 @@ document.querySelector("#clearOrderFiltersBtn")?.addEventListener("click", () =>
   const searchInput = document.querySelector("#orderSearchInput");
   const statusFilter = document.querySelector("#orderStatusFilter");
   const typeFilter = document.querySelector("#orderTypeFilter");
+  if (searchInput) searchInput.value = "";
+  if (statusFilter) statusFilter.value = "all";
+  if (typeFilter) typeFilter.value = "all";
+  renderAll();
+});
+
+document.querySelector("#clearRewardFiltersBtn")?.addEventListener("click", () => {
+  const searchInput = document.querySelector("#rewardSearchInput");
+  const statusFilter = document.querySelector("#rewardStatusFilter");
+  const typeFilter = document.querySelector("#rewardTypeFilter");
   if (searchInput) searchInput.value = "";
   if (statusFilter) statusFilter.value = "all";
   if (typeFilter) typeFilter.value = "all";
