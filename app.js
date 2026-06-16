@@ -921,6 +921,7 @@ function renderMember() {
   document.querySelector("#memberPlanStatus").className = `tag ${statusClass}`;
   document.querySelector("#inviteLink").textContent = inviteLink;
   renderMemberProfile(user);
+  ensureStorageTestButton();
   renderMemberPlans(user);
   renderMemberOrders(user);
   renderMemberOrderProofStatuses(user);
@@ -954,6 +955,19 @@ function renderMemberProfile(user) {
   }
   const submitButton = withdrawForm.querySelector("button[type='submit']");
   if (submitButton) submitButton.disabled = !eligibility.eligible;
+}
+
+function ensureStorageTestButton() {
+  if (document.querySelector("#testStorageBtn")) return;
+  const proofInput = document.querySelector("#paymentInfoForm [name='paymentProof']");
+  const proofField = proofInput?.closest("label");
+  if (!proofField) return;
+  const button = document.createElement("button");
+  button.id = "testStorageBtn";
+  button.className = "button ghost";
+  button.type = "button";
+  button.textContent = "测试凭证上传";
+  proofField.insertAdjacentElement("afterend", button);
 }
 
 function renderMemberPlans(user) {
@@ -1675,6 +1689,20 @@ document.querySelector("#testFirestoreBtn").addEventListener("click", async () =
   await saveState();
   renderAll();
   toast(cloudAvailable ? "云端保存成功" : "云端保存失败，请看状态提示");
+});
+
+document.addEventListener("click", async (event) => {
+  if (event.target?.id !== "testStorageBtn") return;
+  if (!firebaseUser) return toast("请先使用 Google 登录");
+  const proofFile = document.querySelector("#paymentInfoForm [name='paymentProof']")?.files[0];
+  if (!proofFile) return toast("请先选择一张付款证明");
+  try {
+    toast("正在测试 Storage 上传...");
+    await withTimeout(uploadPaymentProof(proofFile, `TEST-${Date.now()}`), PROOF_UPLOAD_TIMEOUT_MS, "付款证明上传超时，请检查 Firebase Storage 是否已启用");
+    toast("Storage 上传成功");
+  } catch (error) {
+    toast(uploadErrorMessage(error));
+  }
 });
 
 document.querySelector("#exportUsersBtn")?.addEventListener("click", () => {
