@@ -13,23 +13,95 @@ service cloud.firestore {
         ];
     }
 
+    function isOwner(userId) {
+      return signedIn() && request.auth.uid == userId;
+    }
+
+    function userCreateIsSafe(userId) {
+      return isOwner(userId)
+        && request.resource.data.id == userId
+        && request.resource.data.firebaseUid == userId
+        && request.resource.data.points == 0
+        && request.resource.data.slots == 0
+        && request.resource.data.packageUntil == ""
+        && request.resource.data.frozen == false;
+    }
+
+    function userUpdateIsSafe(userId) {
+      return isOwner(userId)
+        && request.resource.data.diff(resource.data).affectedKeys().hasAny([
+          "id",
+          "firebaseUid",
+          "inviteCode",
+          "points",
+          "slots",
+          "packageUntil",
+          "level",
+          "frozen"
+        ]) == false
+        && (
+          request.resource.data.referrerId == resource.data.referrerId
+          || resource.data.referrerId == ""
+        );
+    }
+
+    function ownerCanCreateOrder() {
+      return signedIn()
+        && request.auth.uid == request.resource.data.userId
+        && request.resource.data.status == "pending"
+        && request.resource.data.points == 0;
+    }
+
+    function ownerCanUpdateOrder() {
+      return signedIn()
+        && request.auth.uid == resource.data.userId
+        && request.resource.data.userId == resource.data.userId
+        && request.resource.data.status == resource.data.status
+        && request.resource.data.amount == resource.data.amount
+        && request.resource.data.points == resource.data.points
+        && request.resource.data.planId == resource.data.planId
+        && request.resource.data.type == resource.data.type;
+    }
+
+    function ownerCanCreateWithdraw() {
+      return signedIn()
+        && request.auth.uid == request.resource.data.userId
+        && request.resource.data.status == "pending"
+        && request.resource.data.amount > 0;
+    }
+
+    function ownerCanUpdateWithdraw() {
+      return signedIn()
+        && request.auth.uid == resource.data.userId
+        && request.resource.data.userId == resource.data.userId
+        && request.resource.data.status == resource.data.status
+        && request.resource.data.amount == resource.data.amount;
+    }
+
     match /amsystem/{docId} {
       allow read: if signedIn();
       allow write: if isAdmin();
     }
 
     match /amsystemUsers/{userId} {
-      allow read, write: if isAdmin() || (signedIn() && request.auth.uid == userId);
+      allow read: if isAdmin() || isOwner(userId);
+      allow create: if isAdmin() || userCreateIsSafe(userId);
+      allow update: if isAdmin() || userUpdateIsSafe(userId);
+      allow delete: if isAdmin();
     }
 
     match /amsystemOrders/{orderId} {
-      allow read, write: if isAdmin() || (signedIn() && request.auth.uid == resource.data.userId);
-      allow create: if signedIn() && request.auth.uid == request.resource.data.userId;
+      allow read: if isAdmin() || (signedIn() && request.auth.uid == resource.data.userId);
+      allow create: if isAdmin() || ownerCanCreateOrder();
+      allow update: if isAdmin() || ownerCanUpdateOrder();
+      allow delete: if isAdmin();
     }
 
     match /amsystemWithdraws/{withdrawId} {
-      allow read, write: if isAdmin() || (signedIn() && request.auth.uid == resource.data.userId);
-      allow create: if signedIn() && request.auth.uid == request.resource.data.userId;
+      allow read: if isAdmin() || (signedIn() && request.auth.uid == resource.data.userId);
+      allow create: if isAdmin() || ownerCanCreateWithdraw();
+      allow update: if isAdmin() || ownerCanUpdateWithdraw();
+      allow delete: if isAdmin();
     }
 
     match /amsystemRewards/{rewardId} {

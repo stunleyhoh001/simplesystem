@@ -105,9 +105,9 @@ function createSeedData() {
       { id: "plan_rm580", name: "RM580 进阶配套", amount: 580, points: 58000, slots: 35, validDays: 60, firstRate: 25, repeatRate: 10 },
     ],
     users: [
-      { id: "u_1001", name: "李明", account: "liming@example.com", inviteCode: "LM1001", referrerId: "", level: "推广用户", points: 18000, slots: 10, packageUntil: futureDate(20), frozen: false },
-      { id: "u_1002", name: "王芳", account: "13800000002", inviteCode: "WF1002", referrerId: "u_1001", level: "高级推广用户", points: 58000, slots: 35, packageUntil: futureDate(45), frozen: false },
-      { id: "u_1003", name: "陈杰", account: "chenjie@example.com", inviteCode: "CJ1003", referrerId: "u_1001", level: "普通用户", points: 0, slots: 0, packageUntil: "", frozen: false },
+      { id: "u_1001", name: "李明", account: "liming@example.com", phone: "", withdrawMethod: "", withdrawAccount: "", inviteCode: "LM1001", referrerId: "", level: "推广用户", points: 18000, slots: 10, packageUntil: futureDate(20), frozen: false },
+      { id: "u_1002", name: "王芳", account: "13800000002", phone: "", withdrawMethod: "", withdrawAccount: "", inviteCode: "WF1002", referrerId: "u_1001", level: "高级推广用户", points: 58000, slots: 35, packageUntil: futureDate(45), frozen: false },
+      { id: "u_1003", name: "陈杰", account: "chenjie@example.com", phone: "", withdrawMethod: "", withdrawAccount: "", inviteCode: "CJ1003", referrerId: "u_1001", level: "普通用户", points: 0, slots: 0, packageUntil: "", frozen: false },
     ],
     orders: [],
     pointLogs: [],
@@ -297,7 +297,10 @@ function normalizeUserDoc(id, data) {
     firebaseUid: data.firebaseUid || id,
     name: data.name || "未命名用户",
     account: data.account || "",
+    phone: data.phone || "",
     photoURL: data.photoURL || "",
+    withdrawMethod: data.withdrawMethod || "",
+    withdrawAccount: data.withdrawAccount || "",
     inviteCode: data.inviteCode || `${(data.name || "U").slice(0, 1).toUpperCase()}${id.slice(0, 4)}`,
     referrerId: data.referrerId || "",
     level: data.level || "普通用户",
@@ -512,7 +515,10 @@ function upsertFirebaseUser(userCredential) {
       firebaseUid: googleUser.uid,
       name: googleUser.displayName || account,
       account,
+      phone: "",
       photoURL: googleUser.photoURL || "",
+      withdrawMethod: "",
+      withdrawAccount: "",
       inviteCode: `${(googleUser.displayName || "G").slice(0, 1).toUpperCase()}${Math.floor(1000 + Math.random() * 9000)}`,
       referrerId: "",
       level: "普通用户",
@@ -526,7 +532,10 @@ function upsertFirebaseUser(userCredential) {
     user.firebaseUid = googleUser.uid;
     user.name = googleUser.displayName || user.name;
     user.account = account;
+    user.phone = user.phone || "";
     user.photoURL = googleUser.photoURL || user.photoURL || "";
+    user.withdrawMethod = user.withdrawMethod || "";
+    user.withdrawAccount = user.withdrawAccount || "";
   }
   state.currentUserId = user.id;
 }
@@ -557,12 +566,29 @@ function renderMember() {
   document.querySelector("#memberPlanStatus").textContent = statusLabel;
   document.querySelector("#memberPlanStatus").className = `tag ${statusClass}`;
   document.querySelector("#inviteLink").textContent = inviteLink;
+  renderMemberProfile(user);
   renderMemberPlans(user);
   renderMemberOrders(user);
   renderMemberReferrals(user);
   renderRewardRules();
   renderMemberRewards(user);
   renderMemberWithdraws(user);
+}
+
+function renderMemberProfile(user) {
+  const form = document.querySelector("#profileForm");
+  if (!form) return;
+  form.querySelector("[name='name']").value = user.name || "";
+  form.querySelector("[name='phone']").value = user.phone || "";
+  form.querySelector("[name='withdrawMethod']").value = user.withdrawMethod || "";
+  form.querySelector("[name='withdrawAccount']").value = user.withdrawAccount || "";
+
+  const withdrawForm = document.querySelector("#withdrawForm");
+  if (!withdrawForm) return;
+  const methodInput = withdrawForm.querySelector("[name='method']");
+  const accountInput = withdrawForm.querySelector("[name='account']");
+  if (methodInput && !methodInput.value) methodInput.value = user.withdrawMethod || "";
+  if (accountInput && !accountInput.value) accountInput.value = user.withdrawAccount || "";
 }
 
 function renderMemberPlans(user) {
@@ -647,7 +673,7 @@ function renderAdminUsers() {
   document.querySelector("#adminUserTable").innerHTML = state.users.map((user) => {
     const referrer = findUser(user.referrerId);
     const [statusClass, statusLabel] = packageStatus(user);
-    return `<tr><td>${user.name}</td><td>${user.account}</td><td>${user.inviteCode}</td><td>${referrer?.name || "无"}</td><td>${points(user.points)}</td><td><span class="tag ${statusClass}">${statusLabel}</span></td><td>${directReferralCount(user.id)} / ${user.slots || 0}</td><td><span class="tag ${user.frozen ? "frozen" : "active"}">${user.frozen ? "已冻结" : "正常"}</span></td><td><button class="link" data-freeze-user="${user.id}">${user.frozen ? "解冻" : "冻结"}</button></td></tr>`;
+    return `<tr><td>${user.name}</td><td>${user.account}</td><td>${user.phone || "-"}</td><td>${user.inviteCode}</td><td>${referrer?.name || "无"}</td><td>${points(user.points)}</td><td><span class="tag ${statusClass}">${statusLabel}</span></td><td>${directReferralCount(user.id)} / ${user.slots || 0}</td><td><span class="tag ${user.frozen ? "frozen" : "active"}">${user.frozen ? "已冻结" : "正常"}</span></td><td><button class="link" data-freeze-user="${user.id}">${user.frozen ? "解冻" : "冻结"}</button></td></tr>`;
   }).join("");
 }
 
@@ -771,7 +797,7 @@ function renderAdminLocked() {
   document.querySelector("#metricPendingRewards").textContent = "-";
   document.querySelector("#metricWithdraws").textContent = "-";
   document.querySelector("#adminPlanList").innerHTML = `<article class="plan-card"><strong>后台已锁定</strong><span>请使用管理员 Google 邮箱登录。</span></article>`;
-  document.querySelector("#adminUserTable").innerHTML = `<tr><td colspan="9">无管理员权限</td></tr>`;
+  document.querySelector("#adminUserTable").innerHTML = `<tr><td colspan="10">无管理员权限</td></tr>`;
   document.querySelector("#adminOrderTable").innerHTML = `<tr><td colspan="10">无管理员权限</td></tr>`;
   document.querySelector("#adminRewardTable").innerHTML = `<tr><td colspan="8">无管理员权限</td></tr>`;
   document.querySelector("#adminWithdrawTable").innerHTML = `<tr><td colspan="8">无管理员权限</td></tr>`;
@@ -883,6 +909,21 @@ document.querySelector("#exportWithdrawsBtn")?.addEventListener("click", () => {
   );
 });
 
+document.querySelector("#profileForm").addEventListener("submit", async (event) => {
+  event.preventDefault();
+  if (!firebaseUser) return toast("请先使用 Google 登录");
+  const user = currentUser();
+  const form = new FormData(event.currentTarget);
+  user.name = form.get("name").trim();
+  user.phone = form.get("phone").trim();
+  user.withdrawMethod = form.get("withdrawMethod").trim();
+  user.withdrawAccount = form.get("withdrawAccount").trim();
+  if (!user.name) return toast("请填写显示名称");
+  await saveState();
+  renderAll();
+  toast("用户资料已保存");
+});
+
 document.querySelector("#registerForm").addEventListener("submit", async (event) => {
   event.preventDefault();
   const user = currentUser();
@@ -941,8 +982,11 @@ document.querySelector("#withdrawForm").addEventListener("submit", async (event)
   const user = currentUser();
   const form = new FormData(event.currentTarget);
   const amount = Number(form.get("amount"));
+  const method = form.get("method").trim() || user.withdrawMethod || "";
+  const account = form.get("account").trim() || user.withdrawAccount || "";
+  if (!method || !account) return toast("请先填写收款方式和收款账号");
   if (amount > confirmedAvailable(user.id)) return toast("可提现奖励不足");
-  state.withdraws.push({ id: id("wd"), userId: user.id, amount, method: form.get("method").trim(), account: form.get("account").trim(), status: "pending", createdAt: new Date().toISOString() });
+  state.withdraws.push({ id: id("wd"), userId: user.id, amount, method, account, status: "pending", createdAt: new Date().toISOString() });
   event.currentTarget.reset();
   await saveState();
   renderAll();
