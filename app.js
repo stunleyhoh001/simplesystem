@@ -685,6 +685,7 @@ function createRepeatPoolReward(data, order, buyer, plan, paidAt = order.created
 }
 
 function labelStatus(status) {
+  if (status === "releasing") return "分期释放中";
   return {
     paid: "已支付",
     pending: "待处理",
@@ -706,7 +707,8 @@ function rewardTypeText(reward) {
 
 function rewardAmountText(reward) {
   if (Array.isArray(reward.releasePlan)) {
-    return `${money(reward.releasedAmount || 0)} / ${money(reward.amount)}`;
+    const releasedParts = reward.releasePlan.filter((part) => part.released).length;
+    return `${money(reward.releasedAmount || 0)} / ${money(reward.amount)} (${releasedParts}/${reward.releasePlan.length})`;
   }
   return money(reward.amount);
 }
@@ -931,6 +933,7 @@ function renderAdmin() {
   document.querySelector("#metricPendingRewards").textContent = money(state.rewards.filter((reward) => ["pending", "releasing"].includes(reward.status)).reduce((sum, reward) => sum + (Number(reward.amount || 0) - Number(reward.releasedAmount || 0)), 0));
   document.querySelector("#metricWithdraws").textContent = money(state.withdraws.filter((item) => item.status === "pending").reduce((sum, item) => sum + item.amount, 0));
   ensurePlanCooldownField();
+  ensureRewardStatusOptions();
   renderAdminPlans();
   renderAdminUsers();
   renderRepeatCreditLogs();
@@ -938,6 +941,20 @@ function renderAdmin() {
   renderAdminRewards();
   renderAdminWithdraws();
   renderAdminLogs();
+}
+
+function ensureRewardStatusOptions() {
+  const select = document.querySelector("#rewardStatusFilter");
+  if (!select || select.querySelector("option[value='releasing']")) return;
+  const option = document.createElement("option");
+  option.value = "releasing";
+  option.textContent = "分期释放中";
+  const confirmedOption = select.querySelector("option[value='confirmed']");
+  if (confirmedOption) {
+    confirmedOption.insertAdjacentElement("beforebegin", option);
+  } else {
+    select.appendChild(option);
+  }
 }
 
 function ensurePlanCooldownField() {
@@ -1089,7 +1106,7 @@ function renderAdminRewards() {
     const user = findUser(reward.userId);
     const sourceUser = findUser(reward.sourceUserId);
     const canConfirm = ["pending", "releasing"].includes(reward.status) && new Date(reward.confirmAfter) <= new Date();
-    return `<tr><td>${user?.name || "-"}</td><td>${sourceUser?.name || "-"}</td><td>${reward.orderId}</td><td>${reward.type === "first" ? "首充" : "复购"}</td><td>${rewardAmountText(reward)}</td><td><span class="tag ${reward.status}">${labelStatus(reward.status)}</span></td><td>${rewardNextDateText(reward)}</td><td class="actions">${canConfirm ? `<button class="link" data-confirm-reward="${reward.id}">确认</button>` : ""}${reward.status === "pending" ? `<button class="link" data-cancel-reward="${reward.id}">取消</button><button class="link" data-freeze-reward="${reward.id}">冻结</button>` : ""}</td></tr>`;
+    return `<tr><td>${user?.name || "-"}</td><td>${sourceUser?.name || "-"}</td><td>${reward.orderId}</td><td>${reward.type === "first" ? "首充" : "复购"}</td><td>${rewardAmountText(reward)}</td><td><span class="tag ${reward.status}">${labelStatus(reward.status)}</span></td><td>${rewardNextDateText(reward)}</td><td class="actions">${canConfirm ? `<button class="link" data-confirm-reward="${reward.id}">确认</button>` : ""}${["pending", "releasing"].includes(reward.status) ? `<button class="link" data-cancel-reward="${reward.id}">取消</button><button class="link" data-freeze-reward="${reward.id}">冻结</button>` : ""}</td></tr>`;
   }).join("");
   document.querySelector("#adminRewardTable").innerHTML = rows || `<tr><td colspan="8">没有符合条件的奖励</td></tr>`;
 }
