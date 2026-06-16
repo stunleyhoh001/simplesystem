@@ -46,6 +46,7 @@
               <span>积分余额<strong id="memberPoints">0</strong></span>
               <span>可提现奖励<strong id="memberConfirmed">RM0</strong></span>
               <span>推荐名额<strong id="memberSlots">0 / 0</strong></span>
+              <span>复购资格<strong id="memberRepeatCredits">0</strong></span>
               <span>配套状态<strong id="memberPlanStatus">未开通</strong></span>
             </div>
           </div>
@@ -189,9 +190,10 @@
               <label>充值金额 RM<input name="amount" type="number" min="1" step="1" required /></label>
               <label>发放积分<input name="points" type="number" min="0" step="1" required /></label>
               <label>推荐名额<input name="slots" type="number" min="0" step="1" required /></label>
+              <label>复购奖励资格<input name="repeatCredits" type="number" min="0" step="1" value="10" required /></label>
               <label>有效期天数<input name="validDays" type="number" min="1" step="1" required /></label>
               <label>首充奖励 %<input name="firstRate" type="number" min="0" max="100" step="0.1" required /></label>
-              <label>下线复购奖励 %<input name="repeatRate" type="number" min="0" max="100" step="0.1" required /></label>
+              <label>资格复购奖励 %<input name="repeatRate" type="number" min="0" max="100" step="0.1" required /></label>
               <button class="button primary" type="submit">新增配套</button>
             </form>
             <div id="adminPlanList" class="list"></div>
@@ -240,7 +242,7 @@
                 </form>
                 <div class="table-wrap">
                   <table>
-                    <thead><tr><th>用户</th><th>账号</th><th>手机</th><th>邀请码</th><th>推荐人</th><th>积分</th><th>配套状态</th><th>名额</th><th>状态</th><th>操作</th></tr></thead>
+                    <thead><tr><th>用户</th><th>账号</th><th>手机</th><th>邀请码</th><th>推荐人</th><th>积分</th><th>配套状态</th><th>名额</th><th>复购资格</th><th>状态</th><th>操作</th></tr></thead>
                     <tbody id="adminUserTable"></tbody>
                   </table>
                 </div>

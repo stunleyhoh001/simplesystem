@@ -105,13 +105,13 @@ function createSeedData() {
   const data = {
     currentUserId: "u_1002",
     plans: [
-      { id: "plan_rm180", name: "RM180 启动配套", amount: 180, points: 18000, slots: 10, validDays: 30, firstRate: 20, repeatRate: 8 },
-      { id: "plan_rm580", name: "RM580 进阶配套", amount: 580, points: 58000, slots: 35, validDays: 60, firstRate: 25, repeatRate: 10 },
+      { id: "plan_rm180", name: "RM180 启动配套", amount: 180, points: 18000, slots: 10, repeatCredits: 10, validDays: 30, firstRate: 20, repeatRate: 8 },
+      { id: "plan_rm580", name: "RM580 进阶配套", amount: 580, points: 58000, slots: 35, repeatCredits: 10, validDays: 60, firstRate: 25, repeatRate: 10 },
     ],
     users: [
-      { id: "u_1001", name: "李明", account: "liming@example.com", phone: "", withdrawMethod: "", withdrawAccount: "", inviteCode: "LM1001", referrerId: "", level: "推广用户", points: 18000, slots: 10, packageUntil: futureDate(20), frozen: false },
-      { id: "u_1002", name: "王芳", account: "13800000002", phone: "", withdrawMethod: "", withdrawAccount: "", inviteCode: "WF1002", referrerId: "u_1001", level: "高级推广用户", points: 58000, slots: 35, packageUntil: futureDate(45), frozen: false },
-      { id: "u_1003", name: "陈杰", account: "chenjie@example.com", phone: "", withdrawMethod: "", withdrawAccount: "", inviteCode: "CJ1003", referrerId: "u_1001", level: "普通用户", points: 0, slots: 0, packageUntil: "", frozen: false },
+      { id: "u_1001", name: "李明", account: "liming@example.com", phone: "", withdrawMethod: "", withdrawAccount: "", inviteCode: "LM1001", referrerId: "", level: "推广用户", points: 18000, slots: 10, repeatCredits: 5, repeatCreditQueueAt: pastDate(7), packageUntil: futureDate(20), frozen: false },
+      { id: "u_1002", name: "王芳", account: "13800000002", phone: "", withdrawMethod: "", withdrawAccount: "", inviteCode: "WF1002", referrerId: "u_1001", level: "高级推广用户", points: 58000, slots: 35, repeatCredits: 0, repeatCreditQueueAt: "", packageUntil: futureDate(45), frozen: false },
+      { id: "u_1003", name: "陈杰", account: "chenjie@example.com", phone: "", withdrawMethod: "", withdrawAccount: "", inviteCode: "CJ1003", referrerId: "u_1001", level: "普通用户", points: 0, slots: 0, repeatCredits: 0, repeatCreditQueueAt: "", packageUntil: "", frozen: false },
     ],
     orders: [],
     pointLogs: [],
@@ -215,8 +215,10 @@ async function saveState() {
     } else {
       const user = cloudState.users.find((item) => item.id === firebaseUser.uid);
       if (!user) throw new Error("current-user-document-not-found");
+      const userRef = doc(db, USER_COLLECTION, firebaseUser.uid);
+      const userExists = (await getDoc(userRef)).exists();
       await Promise.all([
-        setDoc(doc(db, USER_COLLECTION, firebaseUser.uid), { ...user, updatedAt: serverTimestamp() }, { merge: true }),
+        setDoc(userRef, { ...userSelfProfileForCloud(user, !userExists), updatedAt: serverTimestamp() }, { merge: true }),
         ...cloudState.orders.filter((order) => order.userId === firebaseUser.uid).map((order) =>
           setDoc(doc(db, ORDER_COLLECTION, order.id), { ...order, updatedAt: serverTimestamp() }, { merge: true })
         ),
@@ -330,6 +332,8 @@ function normalizeUserDoc(id, data) {
     level: data.level || "普通用户",
     points: Number(data.points || 0),
     slots: Number(data.slots || 0),
+    repeatCredits: Number(data.repeatCredits || 0),
+    repeatCreditQueueAt: data.repeatCreditQueueAt || "",
     packageUntil: data.packageUntil || "",
     frozen: Boolean(data.frozen),
   };
@@ -351,6 +355,33 @@ function splitStateForCloud(data) {
 
 function userProfileForCloud(user) {
   const { orders, rewards, withdraws, pointLogs, ...profile } = user;
+  return profile;
+}
+
+function userSelfProfileForCloud(user, includeProtectedDefaults = false) {
+  const profile = {
+    id: user.id,
+    firebaseUid: user.firebaseUid || user.id,
+    name: user.name || "",
+    account: user.account || "",
+    phone: user.phone || "",
+    photoURL: user.photoURL || "",
+    withdrawMethod: user.withdrawMethod || "",
+    withdrawAccount: user.withdrawAccount || "",
+    inviteCode: normalizeInviteCode(user.inviteCode),
+    referrerId: user.referrerId || "",
+  };
+  if (includeProtectedDefaults) {
+    Object.assign(profile, {
+      level: user.level || "普通用户",
+      points: Number(user.points || 0),
+      slots: Number(user.slots || 0),
+      repeatCredits: Number(user.repeatCredits || 0),
+      repeatCreditQueueAt: user.repeatCreditQueueAt || "",
+      packageUntil: user.packageUntil || "",
+      frozen: Boolean(user.frozen),
+    });
+  }
   return profile;
 }
 
@@ -501,27 +532,69 @@ function applyPaidOrder(data, order, paidAt = new Date().toISOString()) {
   user.packageUntil = addDays(paidAt, plan.validDays);
   user.level = plan.amount >= 580 ? "高级推广用户" : "推广用户";
   data.pointLogs.push({ id: id("log"), userId: user.id, change: plan.points, balance: user.points, source: order.id, note: `${plan.name} 积分发放`, createdAt: paidAt });
-  createReward(data, order, user, plan);
+  if (order.type === "repeat") {
+    grantRepeatCredits(user, plan, paidAt);
+    createRepeatPoolReward(data, order, user, plan, paidAt);
+  } else {
+    createFirstReward(data, order, user, plan, paidAt);
+  }
 }
 
-function createReward(data, order, buyer, plan) {
+function planRepeatCredits(plan) {
+  return Number(plan.repeatCredits ?? 10);
+}
+
+function grantRepeatCredits(user, plan, paidAt) {
+  const credits = planRepeatCredits(plan);
+  if (credits <= 0) return;
+  const currentCredits = Number(user.repeatCredits || 0);
+  user.repeatCredits = currentCredits + credits;
+  if (!user.repeatCreditQueueAt || currentCredits <= 0) {
+    user.repeatCreditQueueAt = paidAt;
+  }
+}
+
+function createFirstReward(data, order, buyer, plan, paidAt = order.createdAt) {
   if (!buyer.referrerId) return;
   const referrer = data.users.find((item) => item.id === buyer.referrerId);
   if (!referrer || referrer.frozen) return;
   if (directReferralCount(referrer.id, data) > (referrer.slots || 0)) return;
-  if (order.type === "repeat" && !isActivePackage(referrer)) return;
-  const rate = order.type === "first" ? plan.firstRate : plan.repeatRate;
+  const rate = Number(plan.firstRate || 0);
+  if (rate <= 0) return;
   data.rewards.push({
     id: id("rew"),
     userId: referrer.id,
     sourceUserId: buyer.id,
     orderId: order.id,
-    type: order.type,
+    type: "first",
     rate,
     amount: +(order.amount * (rate / 100)).toFixed(2),
     status: "pending",
-    confirmAfter: addDays(order.createdAt, CONFIRM_DAYS),
-    createdAt: order.createdAt,
+    confirmAfter: addDays(paidAt, CONFIRM_DAYS),
+    createdAt: paidAt,
+  });
+}
+
+function createRepeatPoolReward(data, order, buyer, plan, paidAt = order.createdAt) {
+  const receiver = data.users
+    .filter((user) => user.id !== buyer.id && !user.frozen && Number(user.repeatCredits || 0) > 0)
+    .sort((a, b) => new Date(a.repeatCreditQueueAt || "9999-12-31") - new Date(b.repeatCreditQueueAt || "9999-12-31"))[0];
+  const rate = Number(plan.repeatRate || 0);
+  if (!receiver || rate <= 0) return;
+  receiver.repeatCredits = Math.max(Number(receiver.repeatCredits || 0) - 1, 0);
+  if (receiver.repeatCredits <= 0) receiver.repeatCreditQueueAt = "";
+  data.rewards.push({
+    id: id("rew"),
+    userId: receiver.id,
+    sourceUserId: buyer.id,
+    orderId: order.id,
+    type: "repeat",
+    rewardMode: "pool",
+    rate,
+    amount: +(order.amount * (rate / 100)).toFixed(2),
+    status: "pending",
+    confirmAfter: addDays(paidAt, CONFIRM_DAYS),
+    createdAt: paidAt,
   });
 }
 
@@ -537,6 +610,12 @@ function labelStatus(status) {
     rejected: "已拒绝",
     paidout: "已打款",
   }[status] || status;
+}
+
+function rewardTypeText(reward) {
+  if (reward.type === "first") return "首充奖励";
+  if (reward.rewardMode === "pool") return "复购资格奖励";
+  return "复购奖励";
 }
 
 function paymentMethodText(method) {
@@ -635,6 +714,7 @@ function renderMember() {
   document.querySelector("#memberPoints").textContent = points(user.points);
   document.querySelector("#memberConfirmed").textContent = money(confirmedAvailable(user.id));
   document.querySelector("#memberSlots").textContent = `${Math.max((user.slots || 0) - used, 0)} / ${user.slots || 0}`;
+  document.querySelector("#memberRepeatCredits").textContent = points(user.repeatCredits || 0);
   document.querySelector("#memberPlanStatus").textContent = statusLabel;
   document.querySelector("#memberPlanStatus").className = `tag ${statusClass}`;
   document.querySelector("#inviteLink").textContent = inviteLink;
@@ -669,7 +749,8 @@ function renderMemberPlans(user) {
       <strong>${plan.name} · ${money(plan.amount)}</strong>
       <span>发放积分：${points(plan.points)}</span>
       <span>推荐权限：${plan.slots} 人 / 有效期：${plan.validDays} 天</span>
-      <span>首充奖励：${plan.firstRate}% / 下线复购奖励：${plan.repeatRate}%</span>
+      <span>复购后获得资格：${planRepeatCredits(plan)} 个 / 资格复购奖励：${plan.repeatRate}%</span>
+      <span>首充推荐奖励：${plan.firstRate}%</span>
       <button class="button primary" data-buy-plan="${plan.id}" data-buy-type="${user.packageUntil ? "repeat" : "first"}">申请充值配套</button>
     </article>
   `).join("");
