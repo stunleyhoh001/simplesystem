@@ -4,7 +4,7 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>一分钟联盟营销系统</title>
-    <link rel="stylesheet" href="./styles.css?v=20260616-1" />
+    <link rel="stylesheet" href="./styles.css?v=20260616-2" />
   </head>
   <body>
     <header class="app-header">
@@ -142,6 +142,15 @@
               <table>
                 <thead><tr><th>来源用户</th><th>订单</th><th>类型</th><th>比例</th><th>奖励金额</th><th>状态</th><th>可确认日</th></tr></thead>
                 <tbody id="memberRewardTable"></tbody>
+              </table>
+            </div>
+          </div>
+          <div class="panel">
+            <div class="panel-head"><h2>我的复购资格流水</h2></div>
+            <div class="table-wrap">
+              <table>
+                <thead><tr><th>时间</th><th>变动</th><th>余额</th><th>原因</th><th>来源 / 备注</th></tr></thead>
+                <tbody id="memberRepeatCreditLogTable"></tbody>
               </table>
             </div>
           </div>
@@ -406,6 +415,6 @@
     </main>
 
     <div id="toast" class="toast" role="status" aria-live="polite"></div>
-    <script type="module" src="./app.js?v=20260616-10"></script>
+    <script type="module" src="./app.js?v=20260616-11"></script>
   </body>
 </html>

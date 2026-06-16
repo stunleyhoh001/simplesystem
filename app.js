@@ -740,6 +740,7 @@ function renderMember() {
   renderMemberReferrals(user);
   renderRewardRules();
   renderMemberRewards(user);
+  renderMemberRepeatCreditLogs(user);
   renderMemberWithdraws(user);
 }
 
@@ -816,6 +817,22 @@ function renderMemberRewards(user) {
     return `<tr><td>${sourceUser?.name || "-"}</td><td>${reward.orderId}</td><td>${rewardTypeText(reward)}</td><td>${reward.rate}%</td><td>${money(reward.amount)}</td><td><span class="tag ${reward.status}">${labelStatus(reward.status)}</span></td><td>${new Date(reward.confirmAfter).toLocaleDateString("zh-CN")}</td></tr>`;
   }).join("");
   document.querySelector("#memberRewardTable").innerHTML = rows || `<tr><td colspan="7">暂无奖励</td></tr>`;
+}
+
+function renderMemberRepeatCreditLogs(user) {
+  const table = document.querySelector("#memberRepeatCreditLogTable");
+  if (!table) return;
+  const rows = (state.repeatCreditLogs || [])
+    .filter((log) => log.userId === user.id)
+    .slice()
+    .sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt))
+    .slice(0, 20)
+    .map((log) => {
+      const change = Number(log.change || 0);
+      const changeText = `${change > 0 ? "+" : ""}${change}`;
+      return `<tr><td>${new Date(log.createdAt).toLocaleString("zh-CN")}</td><td>${changeText}</td><td>${points(log.balance || 0)}</td><td>${repeatCreditReasonText(log.reason)}</td><td>${[log.source, log.note].filter(Boolean).join(" / ") || "-"}</td></tr>`;
+    }).join("");
+  table.innerHTML = rows || `<tr><td colspan="5">暂无复购资格流水</td></tr>`;
 }
 
 function renderMemberWithdraws(user) {
