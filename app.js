@@ -761,7 +761,7 @@ function renderAdminUsers() {
 
 function renderAdminOrders() {
   const orders = filteredOrders();
-  document.querySelector("#adminOrderTable").innerHTML = orders.slice().reverse().map((order) => {
+  const rows = orders.slice().reverse().map((order) => {
     const user = findUser(order.userId);
     const plan = findPlan(order.planId);
     const actions = order.status === "pending"
@@ -771,6 +771,7 @@ function renderAdminOrders() {
     const paymentText = `${paymentMethodText(order.paymentMethod)} ${order.paymentRef || ""}${order.paymentNote ? ` / ${order.paymentNote}` : ""}${proofLink}`.trim() || "-";
     return `<tr><td>${order.id}</td><td>${user?.name || "-"}</td><td>${plan?.name || "-"}</td><td>${order.type === "first" ? "首充" : "复购"}</td><td>${money(order.amount)}</td><td>${paymentText}</td><td>${points(order.points)}</td><td><span class="tag ${order.status}">${labelStatus(order.status)}</span></td><td>${new Date(order.createdAt).toLocaleString("zh-CN")}</td><td class="actions">${actions}</td></tr>`;
   }).join("");
+  document.querySelector("#adminOrderTable").innerHTML = rows || `<tr><td colspan="10">没有符合条件的订单</td></tr>`;
 }
 
 function renderAdminRewards() {
@@ -848,8 +849,29 @@ function downloadCsv(filename, headers, rows) {
 }
 
 function filteredOrders() {
+  const keyword = getInputValue("#orderSearchInput").toLowerCase();
   const statusFilter = getSelectValue("#orderStatusFilter", "all");
-  return state.orders.filter((order) => statusFilter === "all" || order.status === statusFilter);
+  const typeFilter = getSelectValue("#orderTypeFilter", "all");
+
+  return state.orders.filter((order) => {
+    const user = findUser(order.userId);
+    const plan = findPlan(order.planId);
+    const searchable = [
+      order.id,
+      user?.name,
+      user?.account,
+      user?.phone,
+      user?.inviteCode,
+      plan?.name,
+      order.paymentRef,
+      order.paymentNote,
+      paymentMethodText(order.paymentMethod),
+    ].join(" ").toLowerCase();
+    const matchesKeyword = !keyword || searchable.includes(keyword);
+    const matchesStatus = statusFilter === "all" || order.status === statusFilter;
+    const matchesType = typeFilter === "all" || order.type === typeFilter;
+    return matchesKeyword && matchesStatus && matchesType;
+  });
 }
 
 function filteredUsers() {
@@ -957,11 +979,12 @@ document.querySelectorAll(".tabs").forEach((tabs) => {
   });
 });
 
-["#orderStatusFilter", "#rewardStatusFilter", "#withdrawStatusFilter", "#userPackageFilter", "#userAccountFilter"].forEach((selector) => {
+["#orderStatusFilter", "#orderTypeFilter", "#rewardStatusFilter", "#withdrawStatusFilter", "#userPackageFilter", "#userAccountFilter"].forEach((selector) => {
   document.querySelector(selector)?.addEventListener("change", renderAll);
 });
 
 document.querySelector("#userSearchInput")?.addEventListener("input", renderAll);
+document.querySelector("#orderSearchInput")?.addEventListener("input", renderAll);
 
 document.querySelector("#clearUserFiltersBtn")?.addEventListener("click", () => {
   const searchInput = document.querySelector("#userSearchInput");
@@ -970,6 +993,16 @@ document.querySelector("#clearUserFiltersBtn")?.addEventListener("click", () => 
   if (searchInput) searchInput.value = "";
   if (packageFilter) packageFilter.value = "all";
   if (accountFilter) accountFilter.value = "all";
+  renderAll();
+});
+
+document.querySelector("#clearOrderFiltersBtn")?.addEventListener("click", () => {
+  const searchInput = document.querySelector("#orderSearchInput");
+  const statusFilter = document.querySelector("#orderStatusFilter");
+  const typeFilter = document.querySelector("#orderTypeFilter");
+  if (searchInput) searchInput.value = "";
+  if (statusFilter) statusFilter.value = "all";
+  if (typeFilter) typeFilter.value = "all";
   renderAll();
 });
 

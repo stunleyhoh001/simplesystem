@@ -252,14 +252,27 @@
                 <div class="panel-head">
                   <h2>订单管理</h2>
                   <div class="actions">
+                    <button id="exportOrdersBtn" class="button ghost" type="button">导出订单</button>
+                  </div>
+                </div>
+                <div class="filter-bar">
+                  <label>搜索订单<input id="orderSearchInput" placeholder="订单号 / 用户 / 配套 / 付款参考号" /></label>
+                  <label>订单状态
                     <select id="orderStatusFilter">
                       <option value="all">全部状态</option>
                       <option value="pending">待处理</option>
                       <option value="paid">已支付</option>
                       <option value="cancelled">已取消</option>
                     </select>
-                    <button id="exportOrdersBtn" class="button ghost" type="button">导出订单</button>
-                  </div>
+                  </label>
+                  <label>订单类型
+                    <select id="orderTypeFilter">
+                      <option value="all">全部类型</option>
+                      <option value="first">首充</option>
+                      <option value="repeat">复购</option>
+                    </select>
+                  </label>
+                  <button id="clearOrderFiltersBtn" class="button ghost" type="button">清除筛选</button>
                 </div>
                 <div class="table-wrap">
                   <table>
@@ -336,6 +349,6 @@
     </main>
 
     <div id="toast" class="toast" role="status" aria-live="polite"></div>
-    <script type="module" src="./app.js?v=20260616-3"></script>
+    <script type="module" src="./app.js?v=20260616-4"></script>
   </body>
 </html>
