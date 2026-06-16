@@ -693,17 +693,40 @@ function packageStatus(user) {
 }
 
 function confirmedAvailable(userId) {
-  const confirmed = state.rewards
+  return withdrawBreakdown(userId).available;
+}
+
+function withdrawBreakdown(userId) {
+  const totals = {
+    first: 0,
+    repeatReleased: 0,
+    pendingRelease: 0,
+    requested: 0,
+    available: 0,
+  };
+  state.rewards
     .filter((reward) => reward.userId === userId && ["confirmed", "releasing"].includes(reward.status))
-    .reduce((sum, reward) => sum + (Array.isArray(reward.releasePlan) ? Number(reward.releasedAmount || 0) : Number(reward.amount || 0)), 0);
-  const requested = state.withdraws
+    .forEach((reward) => {
+      if (reward.type === "first") {
+        totals.first += Number(reward.amount || 0);
+        return;
+      }
+      if (Array.isArray(reward.releasePlan)) {
+        totals.repeatReleased += Number(reward.releasedAmount || 0);
+        totals.pendingRelease += Math.max(Number(reward.amount || 0) - Number(reward.releasedAmount || 0), 0);
+        return;
+      }
+      totals.repeatReleased += Number(reward.amount || 0);
+    });
+  totals.requested = state.withdraws
     .filter((item) => item.userId === userId && item.status !== "rejected")
-    .reduce((sum, item) => sum + item.amount, 0);
-  return Math.max(confirmed - requested, 0);
+    .reduce((sum, item) => sum + Number(item.amount || 0), 0);
+  totals.available = Math.max(totals.first + totals.repeatReleased - totals.requested, 0);
+  return totals;
 }
 
 function withdrawEligibility(user) {
-  const available = confirmedAvailable(user.id);
+  const available = withdrawBreakdown(user.id).available;
   const reasons = [];
   if (user.frozen) reasons.push("账户已冻结");
   if (!isActivePackage(user)) reasons.push("需要有效配套");
@@ -1158,6 +1181,31 @@ function renderMemberProfile(user) {
   }
   const submitButton = withdrawForm.querySelector("button[type='submit']");
   if (submitButton) submitButton.disabled = !eligibility.eligible;
+  renderWithdrawBreakdown(user);
+}
+
+function ensureWithdrawBreakdownBox() {
+  let box = document.querySelector("#withdrawBreakdownBox");
+  if (box) return box;
+  const withdrawForm = document.querySelector("#withdrawForm");
+  if (!withdrawForm?.parentNode) return null;
+  box = document.createElement("div");
+  box.id = "withdrawBreakdownBox";
+  box.className = "breakdown-box";
+  withdrawForm.insertAdjacentElement("beforebegin", box);
+  return box;
+}
+
+function renderWithdrawBreakdown(user) {
+  const box = ensureWithdrawBreakdownBox();
+  if (!box) return;
+  const breakdown = withdrawBreakdown(user.id);
+  box.innerHTML = `
+    <span>首充奖励可提现 <strong>${money(breakdown.first)}</strong></span>
+    <span>复购奖励已释放 <strong>${money(breakdown.repeatReleased)}</strong></span>
+    <span>复购奖励待释放 <strong>${money(breakdown.pendingRelease)}</strong></span>
+    <span>已申请/处理中 <strong>${money(breakdown.requested)}</strong></span>
+  `;
 }
 
 function ensureStorageTestButton() {
@@ -1272,8 +1320,8 @@ function renderMemberRepeatCreditLogs(user) {
 }
 
 function renderMemberWithdraws(user) {
-  const rows = state.withdraws.filter((item) => item.userId === user.id).slice().reverse().map((item) => `<tr><td>${item.id}</td><td>${money(item.amount)}</td><td>${item.method}</td><td>${item.account}</td><td><span class="tag ${item.status}">${labelStatus(item.status)}</span></td><td>${new Date(item.createdAt).toLocaleString("zh-CN")}</td></tr>`).join("");
-  document.querySelector("#memberWithdrawTable").innerHTML = rows || `<tr><td colspan="6">暂无提现记录</td></tr>`;
+  const rows = state.withdraws.filter((item) => item.userId === user.id).slice().reverse().map((item) => `<tr><td>${item.id}</td><td>${money(item.amount)}</td><td>${item.source === "reward" ? "奖励提现" : item.source || "-"}</td><td>${item.method}</td><td>${item.account}</td><td><span class="tag ${item.status}">${labelStatus(item.status)}</span></td><td>${new Date(item.createdAt).toLocaleString("zh-CN")}</td></tr>`).join("");
+  document.querySelector("#memberWithdrawTable").innerHTML = rows || `<tr><td colspan="7">暂无提现记录</td></tr>`;
 }
 
 function renderAdmin() {
@@ -1467,9 +1515,9 @@ function renderAdminWithdraws() {
   const withdraws = filteredWithdraws();
   const rows = withdraws.slice().reverse().map((item) => {
     const user = findUser(item.userId);
-    return `<tr><td>${item.id}</td><td>${user?.name || "-"}</td><td>${money(item.amount)}</td><td>${item.method}</td><td>${item.account}</td><td><span class="tag ${item.status}">${labelStatus(item.status)}</span></td><td>${new Date(item.createdAt).toLocaleString("zh-CN")}</td><td class="actions">${item.status === "pending" ? `<button class="link" data-approve-withdraw="${item.id}">通过</button><button class="link" data-reject-withdraw="${item.id}">拒绝</button>` : ""}${item.status === "approved" ? `<button class="link" data-pay-withdraw="${item.id}">标记打款</button>` : ""}</td></tr>`;
+    return `<tr><td>${item.id}</td><td>${user?.name || "-"}</td><td>${money(item.amount)}</td><td>${item.source === "reward" ? "奖励提现" : item.source || "-"}</td><td>${item.method}</td><td>${item.account}</td><td><span class="tag ${item.status}">${labelStatus(item.status)}</span></td><td>${new Date(item.createdAt).toLocaleString("zh-CN")}</td><td class="actions">${item.status === "pending" ? `<button class="link" data-approve-withdraw="${item.id}">通过</button><button class="link" data-reject-withdraw="${item.id}">拒绝</button>` : ""}${item.status === "approved" ? `<button class="link" data-pay-withdraw="${item.id}">标记打款</button>` : ""}</td></tr>`;
   }).join("");
-  document.querySelector("#adminWithdrawTable").innerHTML = rows || `<tr><td colspan="8">没有符合条件的提现申请</td></tr>`;
+  document.querySelector("#adminWithdrawTable").innerHTML = rows || `<tr><td colspan="9">没有符合条件的提现申请</td></tr>`;
 }
 
 function renderAdminRiskRules() {
@@ -1990,10 +2038,10 @@ document.querySelector("#exportWithdrawsBtn")?.addEventListener("click", () => {
   if (!requireAdmin()) return;
   downloadCsv(
     `amsystem-withdraws-${new Date().toISOString().slice(0, 10)}.csv`,
-    ["提现ID", "用户", "金额", "方式", "账号", "状态", "时间"],
+    ["提现ID", "用户", "金额", "来源", "方式", "账号", "状态", "时间"],
     filteredWithdraws().map((item) => {
       const user = findUser(item.userId);
-      return [item.id, user?.name || "", item.amount, item.method, item.account, labelStatus(item.status), item.createdAt];
+      return [item.id, user?.name || "", item.amount, item.source === "reward" ? "奖励提现" : item.source || "", item.method, item.account, labelStatus(item.status), item.createdAt];
     })
   );
 });

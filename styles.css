@@ -134,6 +134,27 @@ main { padding: 0 clamp(18px, 4vw, 48px) 40px; }
   color: var(--muted);
   font-size: 13px;
 }
+.breakdown-box {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 10px;
+  margin: 0 0 14px;
+}
+.breakdown-box span {
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+  padding: 12px;
+  border-radius: 8px;
+  background: #f8faff;
+  color: var(--muted);
+  font-size: 13px;
+}
+.breakdown-box strong {
+  color: var(--text);
+  font-size: 18px;
+  overflow-wrap: anywhere;
+}
 .proof-retry {
   display: inline-block;
   margin-top: 6px;
@@ -300,7 +321,7 @@ th { color: var(--muted); font-size: 13px; }
 @media (max-width: 1180px) {
   .member-hero, .layout { grid-template-columns: 1fr; }
   .sidebar { position: static; }
-  .mini-grid, .metrics, .grid-form, .grid-form.compact, .filter-bar { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .mini-grid, .metrics, .grid-form, .grid-form.compact, .filter-bar, .breakdown-box { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 }
 @media (min-width: 1181px) and (max-width: 1500px) {
   .member-hero {
@@ -313,6 +334,6 @@ th { color: var(--muted); font-size: 13px; }
 @media (max-width: 720px) {
   .app-header, .panel-head { align-items: stretch; flex-direction: column; }
   .header-actions { align-items: stretch; }
-  .plan-grid, .rule-grid, .risk-grid, .mini-grid, .metrics, .grid-form, .grid-form.compact, .filter-bar { grid-template-columns: 1fr; }
+  .plan-grid, .rule-grid, .risk-grid, .mini-grid, .metrics, .grid-form, .grid-form.compact, .filter-bar, .breakdown-box { grid-template-columns: 1fr; }
   .tabs { overflow-x: auto; flex-wrap: nowrap; padding-bottom: 4px; }
 }
