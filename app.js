@@ -1,4 +1,4 @@
-import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.5/firebase-app.js";
+﻿import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.5/firebase-app.js";
 import {
   getAuth,
   GoogleAuthProvider,
@@ -39,6 +39,8 @@ const CONFIRM_DAYS = 7;
 const REPEAT_RELEASE_DAYS = [7, 14, 30];
 const MIN_WITHDRAW_AMOUNT = 50;
 const PROOF_UPLOAD_TIMEOUT_MS = 60000;
+const PROOF_STORAGE_ATTEMPT_MS = 12000;
+const INLINE_PROOF_MAX_BYTES = 750 * 1024;
 const ADMIN_EMAILS = [
   "stanleyhoh79@gmail.com",
 ];
@@ -628,6 +630,8 @@ function createOrder(data, userId, planId, type, status = "paid", createdAt = ne
     proofName: paymentInfo.proofName || "",
     proofPath: paymentInfo.proofPath || "",
     proofUrl: paymentInfo.proofUrl || "",
+    proofInlineData: paymentInfo.proofInlineData || "",
+    proofInlineType: paymentInfo.proofInlineType || "",
     proofStatus: paymentInfo.proofStatus || "none",
     proofError: paymentInfo.proofError || "",
     createdAt,
@@ -829,7 +833,9 @@ function rewardNextDateText(reward) {
 }
 
 function proofStatusText(order) {
-  if (order.proofStatus === "uploaded" || order.proofUrl) return "凭证已上传";
+  if (order.proofUrl) return "凭证已上传";
+  if (order.proofInlineData) return "凭证已暂存订单内";
+  if (order.proofStatus === "uploaded") return "凭证已上传";
   if (order.proofStatus === "failed") return `凭证上传失败${order.proofError ? `：${order.proofError}` : ""}`;
   if (order.proofName) return `凭证待补传：${order.proofName}`;
   return "未上传凭证";
@@ -856,6 +862,46 @@ async function uploadPaymentProof(file, orderId) {
   await uploadBytes(proofRef, file, { contentType: file.type || "application/octet-stream" });
   const url = await getDownloadURL(proofRef);
   return { proofName: file.name, proofPath: path, proofUrl: url, proofStatus: "uploaded", proofError: "" };
+}
+
+function fileToDataUrl(file) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(String(reader.result || ""));
+    reader.onerror = () => reject(reader.error || new Error("read file failed"));
+    reader.readAsDataURL(file);
+  });
+}
+
+async function inlinePaymentProof(file, sourceError = null) {
+  if (!file) return {};
+  if (file.size > INLINE_PROOF_MAX_BYTES) {
+    throw sourceError || new Error("付款证明上传失败，且文件超过本地内嵌上限 750KB，请先压缩后补传");
+  }
+  const dataUrl = await fileToDataUrl(file);
+  return {
+    proofName: file.name,
+    proofPath: "",
+    proofUrl: "",
+    proofInlineData: dataUrl,
+    proofInlineType: file.type || "application/octet-stream",
+    proofStatus: "uploaded",
+    proofError: "Storage 超时，已暂存订单内",
+  };
+}
+
+async function uploadPaymentProofForOrder(file, orderId) {
+  if (!file) return {};
+  try {
+    return await withTimeout(
+      uploadPaymentProof(file, orderId),
+      PROOF_STORAGE_ATTEMPT_MS,
+      "Storage 上传超时，已改用订单内暂存"
+    );
+  } catch (error) {
+    console.warn("Storage proof upload failed, using inline proof fallback.", error);
+    return inlinePaymentProof(file, error);
+  }
 }
 
 async function callConfirmOrderFunction(orderId) {
@@ -1276,7 +1322,8 @@ function renderAdminOrders() {
     const actions = order.status === "pending"
       ? `<button class="link" data-confirm-order="${order.id}">确认付款</button><button class="link" data-cancel-order="${order.id}">取消订单</button>`
       : "";
-    const proofLink = order.proofUrl ? ` / <a class="link" href="${order.proofUrl}" target="_blank" rel="noopener">查看凭证</a>` : "";
+    const proofHref = order.proofUrl || order.proofInlineData || "";
+    const proofLink = proofHref ? ` / <a class="link" href="${proofHref}" target="_blank" rel="noopener">查看凭证</a>` : "";
     const proofText = ` / ${proofStatusText(order)}`;
     const paymentText = `${paymentMethodText(order.paymentMethod)} ${order.paymentRef || ""}${order.paymentNote ? ` / ${order.paymentNote}` : ""}${proofText}${proofLink}`.trim() || "-";
     return `<tr><td>${order.id}</td><td>${user?.name || "-"}</td><td>${plan?.name || "-"}</td><td>${order.type === "first" ? "首充" : "复购"}</td><td>${money(order.amount)}</td><td>${paymentText}</td><td>${points(order.points)}</td><td><span class="tag ${order.status}">${labelStatus(order.status)}</span></td><td>${new Date(order.createdAt).toLocaleString("zh-CN")}</td><td class="actions">${actions}</td></tr>`;
@@ -1993,7 +2040,7 @@ document.body.addEventListener("click", async (event) => {
     if (!proofFile) return toast("请先在付款资料选择付款证明文件");
     try {
       toast("正在补传付款证明...");
-      Object.assign(order, await withTimeout(uploadPaymentProof(proofFile, order.id), PROOF_UPLOAD_TIMEOUT_MS, "付款证明上传超时，请检查 Firebase Storage 是否已启用"));
+      Object.assign(order, await uploadPaymentProofForOrder(proofFile, order.id));
       await saveState();
       renderAll();
       toast("付款证明已补传");
@@ -2031,7 +2078,7 @@ document.body.addEventListener("click", async (event) => {
     if (proofFile) {
       try {
         toast("正在上传付款证明...");
-        Object.assign(order, await withTimeout(uploadPaymentProof(proofFile, order.id), PROOF_UPLOAD_TIMEOUT_MS, "付款证明上传超时，请检查 Firebase Storage 是否已启用"));
+        Object.assign(order, await uploadPaymentProofForOrder(proofFile, order.id));
       } catch (error) {
         console.warn("Payment proof upload skipped.", error);
         order.proofName = proofFile.name;
@@ -2184,3 +2231,7 @@ setTimeout(() => {
     setSyncStatusText("Firestore：尚未开始检测");
   }
 }, 5000);
+
+
+
+
