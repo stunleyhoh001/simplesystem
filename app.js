@@ -895,13 +895,73 @@ function ensureRepeatCreditLogActions() {
   wrap.parentNode.insertBefore(actions, wrap);
 }
 
+function ensureRepeatCreditLogFilters() {
+  if (document.querySelector("#repeatLogSearchInput")) return;
+  const table = document.querySelector("#repeatCreditLogTable");
+  const wrap = table?.closest(".table-wrap");
+  if (!wrap?.parentNode) return;
+  const filters = document.createElement("div");
+  filters.className = "filter-bar repeat-log-filters";
+  filters.innerHTML = `
+    <label>搜索流水<input id="repeatLogSearchInput" placeholder="用户 / 账号 / 来源 / 备注" /></label>
+    <label>用户<select id="repeatLogUserFilter"><option value="all">全部用户</option></select></label>
+    <label>原因
+      <select id="repeatLogReasonFilter">
+        <option value="all">全部原因</option>
+        <option value="earned">复购获得</option>
+        <option value="used">资格扣除</option>
+        <option value="admin">后台调整</option>
+      </select>
+    </label>
+    <button id="clearRepeatLogFiltersBtn" class="button ghost" type="button">清除筛选</button>
+  `;
+  wrap.parentNode.insertBefore(filters, wrap);
+}
+
+function renderRepeatCreditLogFilters() {
+  const select = document.querySelector("#repeatLogUserFilter");
+  if (!select) return;
+  const currentValue = select.value || "all";
+  const usersWithLogs = new Set((state.repeatCreditLogs || []).map((log) => log.userId).filter(Boolean));
+  const options = state.users
+    .filter((user) => usersWithLogs.has(user.id))
+    .map((user) => `<option value="${user.id}">${user.name} / ${user.inviteCode}</option>`);
+  select.innerHTML = [`<option value="all">全部用户</option>`, ...options].join("");
+  select.value = usersWithLogs.has(currentValue) ? currentValue : "all";
+}
+
+function filteredRepeatCreditLogs() {
+  const keyword = getInputValue("#repeatLogSearchInput").toLowerCase();
+  const userFilter = getSelectValue("#repeatLogUserFilter", "all");
+  const reasonFilter = getSelectValue("#repeatLogReasonFilter", "all");
+  return (state.repeatCreditLogs || [])
+    .filter((log) => {
+      const user = findUser(log.userId);
+      const searchable = [
+        log.id,
+        log.userId,
+        user?.name,
+        user?.account,
+        user?.inviteCode,
+        log.source,
+        log.note,
+        repeatCreditReasonText(log.reason),
+      ].join(" ").toLowerCase();
+      const matchesKeyword = !keyword || searchable.includes(keyword);
+      const matchesUser = userFilter === "all" || log.userId === userFilter;
+      const matchesReason = reasonFilter === "all" || log.reason === reasonFilter;
+      return matchesKeyword && matchesUser && matchesReason;
+    })
+    .sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
+}
+
 function renderRepeatCreditLogs() {
   const table = document.querySelector("#repeatCreditLogTable");
   if (!table) return;
   ensureRepeatCreditLogActions();
-  const rows = (state.repeatCreditLogs || [])
-    .slice()
-    .sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt))
+  ensureRepeatCreditLogFilters();
+  renderRepeatCreditLogFilters();
+  const rows = filteredRepeatCreditLogs()
     .slice(0, 20)
     .map((log) => {
       const user = findUser(log.userId);
@@ -1230,6 +1290,25 @@ document.querySelector("#withdrawSearchInput")?.addEventListener("input", render
 document.querySelector("#withdrawMinAmount")?.addEventListener("input", renderAll);
 document.querySelector("#logSearchInput")?.addEventListener("input", renderAll);
 
+document.addEventListener("input", (event) => {
+  if (event.target?.id === "repeatLogSearchInput") renderAll();
+});
+
+document.addEventListener("change", (event) => {
+  if (["repeatLogUserFilter", "repeatLogReasonFilter"].includes(event.target?.id)) renderAll();
+});
+
+document.addEventListener("click", (event) => {
+  if (event.target?.id !== "clearRepeatLogFiltersBtn") return;
+  const searchInput = document.querySelector("#repeatLogSearchInput");
+  const userFilter = document.querySelector("#repeatLogUserFilter");
+  const reasonFilter = document.querySelector("#repeatLogReasonFilter");
+  if (searchInput) searchInput.value = "";
+  if (userFilter) userFilter.value = "all";
+  if (reasonFilter) reasonFilter.value = "all";
+  renderAll();
+});
+
 document.querySelector("#clearUserFiltersBtn")?.addEventListener("click", () => {
   const searchInput = document.querySelector("#userSearchInput");
   const packageFilter = document.querySelector("#userPackageFilter");
@@ -1331,9 +1410,7 @@ document.querySelector("#exportUsersBtn")?.addEventListener("click", () => {
 document.addEventListener("click", (event) => {
   if (event.target?.id !== "exportRepeatCreditLogsBtn") return;
   if (!requireAdmin()) return;
-  const logs = (state.repeatCreditLogs || [])
-    .slice()
-    .sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
+  const logs = filteredRepeatCreditLogs();
   downloadCsv(
     `amsystem-repeat-credit-logs-${new Date().toISOString().slice(0, 10)}.csv`,
     ["流水ID", "时间", "用户ID", "用户", "账号", "变动", "余额", "原因", "来源", "备注"],
