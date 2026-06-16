@@ -838,6 +838,9 @@ function upsertFirebaseUser(userCredential) {
       level: "普通用户",
       points: 0,
       slots: 0,
+      repeatCredits: 0,
+      repeatCreditQueueAt: "",
+      repeatCooldownUntil: "",
       packageUntil: "",
       frozen: false,
     };
