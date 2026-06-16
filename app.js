@@ -885,6 +885,7 @@ function renderMember() {
   renderMemberProfile(user);
   renderMemberPlans(user);
   renderMemberOrders(user);
+  renderMemberOrderProofStatuses(user);
   renderMemberReferrals(user);
   renderRewardRules();
   renderMemberRewards(user);
@@ -936,6 +937,21 @@ function renderMemberOrders(user) {
     return `<tr><td>${order.id}</td><td>${plan?.name || "-"}</td><td>${order.type === "first" ? "首充" : "复购"}</td><td>${money(order.amount)}</td><td>${points(order.points)}</td><td><span class="tag ${order.status}">${labelStatus(order.status)}</span></td><td>${new Date(order.createdAt).toLocaleString("zh-CN")}</td></tr>`;
   }).join("");
   document.querySelector("#memberOrderTable").innerHTML = rows || `<tr><td colspan="7">暂无订单</td></tr>`;
+}
+
+function renderMemberOrderProofStatuses(user) {
+  const table = document.querySelector("#memberOrderTable");
+  if (!table) return;
+  const orders = state.orders.filter((order) => order.userId === user.id).slice().reverse();
+  [...table.querySelectorAll("tr")].forEach((row, index) => {
+    const order = orders[index];
+    const statusCell = row.children[5];
+    if (!order || !statusCell || statusCell.querySelector(".proof-status")) return;
+    const proofLine = document.createElement("span");
+    proofLine.className = "muted-line proof-status";
+    proofLine.textContent = proofStatusText(order);
+    statusCell.appendChild(proofLine);
+  });
 }
 
 function renderMemberReferrals(user) {
