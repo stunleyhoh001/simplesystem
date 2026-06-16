@@ -794,6 +794,15 @@ async function callConfirmOrderFunction(orderId) {
   return confirmOrderFunction({ orderId });
 }
 
+function withTimeout(promise, ms, message) {
+  return Promise.race([
+    promise,
+    new Promise((_, reject) => {
+      setTimeout(() => reject(new Error(message)), ms);
+    }),
+  ]);
+}
+
 function toast(message) {
   const toastEl = document.querySelector("#toast");
   toastEl.textContent = message;
@@ -1855,15 +1864,18 @@ document.body.addEventListener("click", async (event) => {
     if (buyPlan.dataset.buyType === "repeat" && state.orders.some((order) => order.userId === user.id && order.type === "repeat" && order.status === "pending")) {
       return toast("你已有待确认的复购订单，请先等待后台处理");
     }
+    toast("正在提交配套申请...");
     const order = createOrder(state, user.id, buyPlan.dataset.buyPlan, buyPlan.dataset.buyType, "pending", new Date().toISOString(), paymentInfo);
     const proofFile = document.querySelector("#paymentInfoForm [name='paymentProof']").files[0];
     if (proofFile) {
       try {
-        Object.assign(order, await uploadPaymentProof(proofFile, order.id));
+        toast("正在上传付款证明...");
+        Object.assign(order, await withTimeout(uploadPaymentProof(proofFile, order.id), 15000, "付款证明上传超时"));
       } catch (error) {
-        state.orders = state.orders.filter((item) => item.id !== order.id);
+        console.warn("Payment proof upload skipped.", error);
+        order.proofName = proofFile.name;
+        order.paymentNote = `${order.paymentNote || ""} / 付款证明暂未上传：${error.message || "upload failed"}`.trim();
         toast(error.message || "付款证明上传失败");
-        return;
       }
     }
     await saveState();
