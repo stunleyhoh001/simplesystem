@@ -232,6 +232,9 @@ async function loadState() {
 }
 
 async function saveState() {
+  if (firebaseUser) {
+    normalizePendingOrderIdsForOwner(firebaseUser.uid);
+  }
   localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
   if (!firebaseUser) {
     syncMessage = "Firestore：未登录，暂存本地";
@@ -277,29 +280,49 @@ async function saveState() {
       if (!user) throw new Error("current-user-document-not-found");
       const userRef = doc(db, USER_COLLECTION, firebaseUser.uid);
       const userExists = (await getDoc(userRef)).exists();
-      await Promise.all([
-        setDoc(userRef, { ...userSelfProfileForCloud(user, !userExists), updatedAt: serverTimestamp() }, { merge: true }),
-        ...cloudState.orders.filter((order) => order.userId === firebaseUser.uid && order.status === "pending").map((order) =>
-          setDoc(doc(db, ORDER_COLLECTION, order.id), { ...order, updatedAt: serverTimestamp() }, { merge: true })
-        ),
-        ...cloudState.withdraws.filter((withdraw) => withdraw.userId === firebaseUser.uid && withdraw.status === "pending").map((withdraw) =>
-          setDoc(doc(db, WITHDRAW_COLLECTION, withdraw.id), { ...withdraw, updatedAt: serverTimestamp() }, { merge: true })
-        ),
-        ...cloudState.invites.filter((invite) => invite.userId === firebaseUser.uid).map((invite) =>
-          setDoc(doc(db, INVITE_COLLECTION, invite.id), { ...invite, updatedAt: serverTimestamp() }, { merge: true })
-        ),
-        ...cloudState.referrals.filter((referral) => referral.inviteeId === firebaseUser.uid).map((referral) =>
-          setDoc(doc(db, REFERRAL_COLLECTION, referral.id), { ...referral, updatedAt: serverTimestamp() }, { merge: true })
-        ),
-      ]);
+      await setDocWithSyncStep("用户资料", userRef, { ...userSelfProfileForCloud(user, !userExists), updatedAt: serverTimestamp() }, { merge: true });
+      for (const order of cloudState.orders.filter((item) => item.userId === firebaseUser.uid && item.status === "pending")) {
+        await setDocWithSyncStep(`充值订单 ${order.id}`, doc(db, ORDER_COLLECTION, order.id), { ...order, updatedAt: serverTimestamp() }, { merge: true });
+      }
+      for (const withdraw of cloudState.withdraws.filter((item) => item.userId === firebaseUser.uid && item.status === "pending")) {
+        await setDocWithSyncStep(`提现申请 ${withdraw.id}`, doc(db, WITHDRAW_COLLECTION, withdraw.id), { ...withdraw, updatedAt: serverTimestamp() }, { merge: true });
+      }
+      const optionalWrites = [
+        ...cloudState.invites.filter((invite) => invite.userId === firebaseUser.uid).map((invite) => ({
+          label: "invite",
+          ref: doc(db, INVITE_COLLECTION, invite.id),
+          data: invite,
+        })),
+        ...cloudState.referrals.filter((referral) => referral.inviteeId === firebaseUser.uid).map((referral) => ({
+          label: "referral",
+          ref: doc(db, REFERRAL_COLLECTION, referral.id),
+          data: referral,
+        })),
+      ];
+      for (const item of optionalWrites) {
+        try {
+          await setDoc(item.ref, { ...item.data, updatedAt: serverTimestamp() }, { merge: true });
+        } catch (error) {
+          console.warn(`Optional Firestore ${item.label} sync failed.`, error);
+        }
+      }
     }
     cloudAvailable = true;
     syncMessage = `Firestore：保存成功 ${new Date().toLocaleTimeString("zh-CN")}`;
   } catch (error) {
     cloudAvailable = false;
     console.warn("Firestore save failed, fallback remains local.", error);
-    syncMessage = `Firestore：保存失败 ${error.code || error.name || "unknown"} - ${error.message || ""}`;
+    syncMessage = `Firestore：保存失败${error.syncStep ? `（${error.syncStep}）` : ""} ${error.code || error.name || "unknown"} - ${error.message || ""}`;
     toast(`Firestore 保存失败：${error.code || "unknown"}`);
+  }
+}
+
+async function setDocWithSyncStep(step, ref, data, options = { merge: true }) {
+  try {
+    await setDoc(ref, data, options);
+  } catch (error) {
+    error.syncStep = step;
+    throw error;
   }
 }
 
@@ -332,11 +355,19 @@ function mergeById(primary = [], fallback = []) {
 
 function mergeLocalPendingState(cloudState, localState, userId) {
   if (!cloudState || !localState || !userId) return cloudState;
+  const localOwnerIds = new Set([userId]);
+  const localUser = (localState.users || []).find((user) =>
+    user.id === userId
+    || user.firebaseUid === userId
+    || (firebaseUser?.email && user.account === firebaseUser.email)
+  );
+  if (localUser?.id) localOwnerIds.add(localUser.id);
   const localPendingOrders = (localState.orders || [])
-    .filter((order) => order.userId === userId && order.status === "pending");
+    .filter((order) => localOwnerIds.has(order.userId) && order.status === "pending")
+    .map((order) => ({ ...order, userId }));
   const localPendingWithdraws = (localState.withdraws || [])
-    .filter((withdraw) => withdraw.userId === userId && withdraw.status === "pending");
-  const localUser = (localState.users || []).find((user) => user.id === userId);
+    .filter((withdraw) => localOwnerIds.has(withdraw.userId) && withdraw.status === "pending")
+    .map((withdraw) => ({ ...withdraw, userId }));
   const hasUser = (cloudState.users || []).some((user) => user.id === userId);
   return {
     ...cloudState,
@@ -532,13 +563,50 @@ function referralDocsForState(data) {
   return [...existing.values()];
 }
 
+function migrateUserId(oldId, newId) {
+  if (!oldId || !newId || oldId === newId || !state) return;
+  state.orders = (state.orders || []).map((order) => order.userId === oldId ? { ...order, userId: newId } : order);
+  state.withdraws = (state.withdraws || []).map((withdraw) => withdraw.userId === oldId ? { ...withdraw, userId: newId } : withdraw);
+  state.rewards = (state.rewards || []).map((reward) => reward.userId === oldId ? { ...reward, userId: newId } : reward);
+  state.pointLogs = (state.pointLogs || []).map((log) => log.userId === oldId ? { ...log, userId: newId } : log);
+  state.repeatCreditLogs = (state.repeatCreditLogs || []).map((log) => log.userId === oldId ? { ...log, userId: newId } : log);
+  state.users.forEach((item) => {
+    if (item.referrerId === oldId) item.referrerId = newId;
+  });
+  state.referrals = (state.referrals || []).map((referral) => ({
+    ...referral,
+    id: referral.id === `${referral.referrerId}_${referral.inviteeId}` ? undefined : referral.id,
+    referrerId: referral.referrerId === oldId ? newId : referral.referrerId,
+    inviteeId: referral.inviteeId === oldId ? newId : referral.inviteeId,
+  })).map((referral) => ({
+    ...referral,
+    id: referral.id || `${referral.referrerId}_${referral.inviteeId}`,
+  }));
+  if (state.currentUserId === oldId) state.currentUserId = newId;
+}
+
 function id(prefix) {
   return `${prefix}_${Date.now()}_${Math.random().toString(16).slice(2, 7)}`;
 }
 
-function orderNo(data = state) {
+function orderNo(data = state, userId = "") {
   const ymd = new Date().toISOString().slice(0, 10).replaceAll("-", "");
-  return `R${ymd}${String(data.orders.length + 1).padStart(4, "0")}`;
+  const serial = `R${ymd}${String(data.orders.length + 1).padStart(4, "0")}`;
+  if (!firebaseUser?.uid) return serial;
+  const owner = String(userId || firebaseUser.uid).replace(/[^\w-]+/g, "").slice(0, 8);
+  return `${serial}-${owner}-${Math.random().toString(16).slice(2, 6)}`;
+}
+
+function normalizePendingOrderIdsForOwner(userId) {
+  if (!state || !userId) return;
+  const owner = String(userId).replace(/[^\w-]+/g, "").slice(0, 8);
+  state.orders = (state.orders || []).map((order) => {
+    if (order.userId !== userId || order.status !== "pending" || !/^R\d{12}$/.test(order.id)) return order;
+    return {
+      ...order,
+      id: `${order.id}-${owner}-${Math.random().toString(16).slice(2, 6)}`,
+    };
+  });
 }
 
 function money(value) {
@@ -643,7 +711,7 @@ function createOrder(data, userId, planId, type, status = "paid", createdAt = ne
   const plan = data.plans.find((item) => item.id === planId);
   if (!user || !plan) return null;
   const order = {
-    id: orderNo(data),
+    id: orderNo(data, userId),
     userId,
     planId,
     type,
@@ -988,6 +1056,11 @@ function upsertFirebaseUser(userCredential) {
     };
     state.users.push(user);
   } else {
+    const oldId = user.id;
+    if (oldId !== googleUser.uid) {
+      migrateUserId(oldId, googleUser.uid);
+      user.id = googleUser.uid;
+    }
     user.firebaseUid = googleUser.uid;
     user.name = googleUser.displayName || user.name;
     user.account = account;
@@ -997,6 +1070,13 @@ function upsertFirebaseUser(userCredential) {
     user.withdrawAccount = user.withdrawAccount || "";
     user.inviteCode = normalizeInviteCode(user.inviteCode);
   }
+  state.users = state.users.filter((item, index, users) =>
+    index === users.findIndex((other) =>
+      other.id === item.id
+      || (item.account && other.account === item.account)
+      || (item.firebaseUid && other.firebaseUid === item.firebaseUid)
+    )
+  );
   state.currentUserId = user.id;
 }
 
