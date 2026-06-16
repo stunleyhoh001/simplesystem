@@ -36,6 +36,7 @@ const ADMIN_LOG_COLLECTION = "amsystemAdminLogs";
 const INVITE_COLLECTION = "amsystemInviteCodes";
 const REFERRAL_COLLECTION = "amsystemReferrals";
 const CONFIRM_DAYS = 7;
+const REPEAT_RELEASE_DAYS = [7, 14, 30];
 const ADMIN_EMAILS = [
   "stanleyhoh79@gmail.com",
 ];
@@ -525,8 +526,8 @@ function packageStatus(user) {
 
 function confirmedAvailable(userId) {
   const confirmed = state.rewards
-    .filter((reward) => reward.userId === userId && reward.status === "confirmed")
-    .reduce((sum, reward) => sum + reward.amount, 0);
+    .filter((reward) => reward.userId === userId && ["confirmed", "releasing"].includes(reward.status))
+    .reduce((sum, reward) => sum + (Array.isArray(reward.releasePlan) ? Number(reward.releasedAmount || 0) : Number(reward.amount || 0)), 0);
   const requested = state.withdraws
     .filter((item) => item.userId === userId && item.status !== "rejected")
     .reduce((sum, item) => sum + item.amount, 0);
@@ -585,6 +586,46 @@ function planRepeatCredits(plan) {
   return Number(plan.repeatCredits ?? 10);
 }
 
+function createReleasePlan(totalAmount, paidAt) {
+  const amount = Number(totalAmount || 0);
+  let remaining = amount;
+  return REPEAT_RELEASE_DAYS.map((days, index) => {
+    const isLast = index === REPEAT_RELEASE_DAYS.length - 1;
+    const partAmount = isLast
+      ? remaining
+      : Number((amount / REPEAT_RELEASE_DAYS.length).toFixed(2));
+    remaining = Number((remaining - partAmount).toFixed(2));
+    return {
+      amount: partAmount,
+      releaseAt: addDays(paidAt, days),
+      released: false,
+      releasedAt: "",
+    };
+  });
+}
+
+function releaseDueRewardParts(reward, now = new Date()) {
+  if (!Array.isArray(reward.releasePlan) || !reward.releasePlan.length) return false;
+  let changed = false;
+  reward.releasePlan.forEach((part) => {
+    if (!part.released && new Date(part.releaseAt) <= now) {
+      part.released = true;
+      part.releasedAt = now.toISOString();
+      changed = true;
+    }
+  });
+  if (!changed) return false;
+  reward.releasedAmount = reward.releasePlan
+    .filter((part) => part.released)
+    .reduce((sum, part) => sum + Number(part.amount || 0), 0);
+  const fullyReleased = reward.releasePlan.every((part) => part.released);
+  reward.status = fullyReleased ? "confirmed" : "releasing";
+  reward.confirmAfter = fullyReleased
+    ? reward.releasePlan[reward.releasePlan.length - 1].releaseAt
+    : reward.releasePlan.find((part) => !part.released)?.releaseAt || reward.confirmAfter;
+  return true;
+}
+
 function grantRepeatCredits(data, user, plan, paidAt) {
   const credits = planRepeatCredits(plan);
   if (credits <= 0) return;
@@ -636,6 +677,8 @@ function createRepeatPoolReward(data, order, buyer, plan, paidAt = order.created
     rate,
     amount: +(order.amount * (rate / 100)).toFixed(2),
     status: "pending",
+    releasedAmount: 0,
+    releasePlan: createReleasePlan(+(order.amount * (rate / 100)).toFixed(2), paidAt),
     confirmAfter: addDays(paidAt, CONFIRM_DAYS),
     createdAt: paidAt,
   });
@@ -659,6 +702,21 @@ function rewardTypeText(reward) {
   if (reward.type === "first") return "首充奖励";
   if (reward.rewardMode === "pool") return "复购资格奖励";
   return "复购奖励";
+}
+
+function rewardAmountText(reward) {
+  if (Array.isArray(reward.releasePlan)) {
+    return `${money(reward.releasedAmount || 0)} / ${money(reward.amount)}`;
+  }
+  return money(reward.amount);
+}
+
+function rewardNextDateText(reward) {
+  if (Array.isArray(reward.releasePlan)) {
+    const next = reward.releasePlan.find((part) => !part.released);
+    return next ? new Date(next.releaseAt).toLocaleDateString("zh-CN") : new Date(reward.confirmAfter).toLocaleDateString("zh-CN");
+  }
+  return new Date(reward.confirmAfter).toLocaleDateString("zh-CN");
 }
 
 function paymentMethodText(method) {
@@ -841,7 +899,7 @@ function renderRewardRules() {
 function renderMemberRewards(user) {
   const rows = state.rewards.filter((reward) => reward.userId === user.id).slice().reverse().map((reward) => {
     const sourceUser = findUser(reward.sourceUserId);
-    return `<tr><td>${sourceUser?.name || "-"}</td><td>${reward.orderId}</td><td>${rewardTypeText(reward)}</td><td>${reward.rate}%</td><td>${money(reward.amount)}</td><td><span class="tag ${reward.status}">${labelStatus(reward.status)}</span></td><td>${new Date(reward.confirmAfter).toLocaleDateString("zh-CN")}</td></tr>`;
+    return `<tr><td>${sourceUser?.name || "-"}</td><td>${reward.orderId}</td><td>${rewardTypeText(reward)}</td><td>${reward.rate}%</td><td>${rewardAmountText(reward)}</td><td><span class="tag ${reward.status}">${labelStatus(reward.status)}</span></td><td>${rewardNextDateText(reward)}</td></tr>`;
   }).join("");
   document.querySelector("#memberRewardTable").innerHTML = rows || `<tr><td colspan="7">暂无奖励</td></tr>`;
 }
@@ -870,7 +928,7 @@ function renderMemberWithdraws(user) {
 function renderAdmin() {
   document.querySelector("#metricUsers").textContent = state.users.length;
   document.querySelector("#metricSales").textContent = money(state.orders.filter((order) => order.status === "paid").reduce((sum, order) => sum + order.amount, 0));
-  document.querySelector("#metricPendingRewards").textContent = money(state.rewards.filter((reward) => reward.status === "pending").reduce((sum, reward) => sum + reward.amount, 0));
+  document.querySelector("#metricPendingRewards").textContent = money(state.rewards.filter((reward) => ["pending", "releasing"].includes(reward.status)).reduce((sum, reward) => sum + (Number(reward.amount || 0) - Number(reward.releasedAmount || 0)), 0));
   document.querySelector("#metricWithdraws").textContent = money(state.withdraws.filter((item) => item.status === "pending").reduce((sum, item) => sum + item.amount, 0));
   ensurePlanCooldownField();
   renderAdminPlans();
@@ -1030,8 +1088,8 @@ function renderAdminRewards() {
   const rows = rewards.slice().reverse().map((reward) => {
     const user = findUser(reward.userId);
     const sourceUser = findUser(reward.sourceUserId);
-    const canConfirm = reward.status === "pending" && new Date(reward.confirmAfter) <= new Date();
-    return `<tr><td>${user?.name || "-"}</td><td>${sourceUser?.name || "-"}</td><td>${reward.orderId}</td><td>${reward.type === "first" ? "首充" : "复购"}</td><td>${money(reward.amount)}</td><td><span class="tag ${reward.status}">${labelStatus(reward.status)}</span></td><td>${new Date(reward.confirmAfter).toLocaleDateString("zh-CN")}</td><td class="actions">${canConfirm ? `<button class="link" data-confirm-reward="${reward.id}">确认</button>` : ""}${reward.status === "pending" ? `<button class="link" data-cancel-reward="${reward.id}">取消</button><button class="link" data-freeze-reward="${reward.id}">冻结</button>` : ""}</td></tr>`;
+    const canConfirm = ["pending", "releasing"].includes(reward.status) && new Date(reward.confirmAfter) <= new Date();
+    return `<tr><td>${user?.name || "-"}</td><td>${sourceUser?.name || "-"}</td><td>${reward.orderId}</td><td>${reward.type === "first" ? "首充" : "复购"}</td><td>${rewardAmountText(reward)}</td><td><span class="tag ${reward.status}">${labelStatus(reward.status)}</span></td><td>${rewardNextDateText(reward)}</td><td class="actions">${canConfirm ? `<button class="link" data-confirm-reward="${reward.id}">确认</button>` : ""}${reward.status === "pending" ? `<button class="link" data-cancel-reward="${reward.id}">取消</button><button class="link" data-freeze-reward="${reward.id}">冻结</button>` : ""}</td></tr>`;
   }).join("");
   document.querySelector("#adminRewardTable").innerHTML = rows || `<tr><td colspan="8">没有符合条件的奖励</td></tr>`;
 }
@@ -1491,7 +1549,7 @@ document.querySelector("#exportRewardsBtn")?.addEventListener("click", () => {
     filteredRewards().map((reward) => {
       const user = findUser(reward.userId);
       const sourceUser = findUser(reward.sourceUserId);
-      return [reward.id, user?.name || "", sourceUser?.name || "", reward.orderId, rewardTypeText(reward), reward.rate, reward.amount, labelStatus(reward.status), reward.confirmAfter];
+      return [reward.id, user?.name || "", sourceUser?.name || "", reward.orderId, rewardTypeText(reward), reward.rate, rewardAmountText(reward), labelStatus(reward.status), rewardNextDateText(reward)];
     })
   );
 });
@@ -1639,8 +1697,14 @@ document.querySelector("#withdrawForm").addEventListener("submit", async (event)
 document.querySelector("#confirmDueBtn").addEventListener("click", async () => {
   if (!requireAdmin()) return;
   let count = 0;
+  const now = new Date();
   state.rewards.forEach((reward) => {
-    if (reward.status === "pending" && new Date(reward.confirmAfter) <= new Date()) {
+    if (Array.isArray(reward.releasePlan) && ["pending", "releasing"].includes(reward.status) && releaseDueRewardParts(reward, now)) {
+      count += 1;
+      addAdminLog("释放分期奖励", reward.orderId, `已释放 ${money(reward.releasedAmount || 0)} / ${money(reward.amount)}`);
+      return;
+    }
+    if (!Array.isArray(reward.releasePlan) && reward.status === "pending" && new Date(reward.confirmAfter) <= now) {
       reward.status = "confirmed";
       count += 1;
       addAdminLog("确认到期奖励", reward.orderId, `奖励 ${money(reward.amount)}`);
@@ -1743,7 +1807,13 @@ document.body.addEventListener("click", async (event) => {
     if (!requireAdmin()) return;
     const rewardId = rewardAction.dataset.confirmReward || rewardAction.dataset.cancelReward || rewardAction.dataset.freezeReward;
     const reward = state.rewards.find((item) => item.id === rewardId);
-    if (rewardAction.dataset.confirmReward) reward.status = "confirmed";
+    if (rewardAction.dataset.confirmReward) {
+      if (Array.isArray(reward.releasePlan)) {
+        releaseDueRewardParts(reward);
+      } else {
+        reward.status = "confirmed";
+      }
+    }
     if (rewardAction.dataset.cancelReward) reward.status = "cancelled";
     if (rewardAction.dataset.freezeReward) reward.status = "frozen";
     addAdminLog("更新奖励状态", reward.orderId, `${reward.status} / ${money(reward.amount)}`);

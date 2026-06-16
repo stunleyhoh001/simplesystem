@@ -10,6 +10,7 @@ const ADMIN_EMAILS = [
 ];
 
 const CONFIRM_DAYS = 7;
+const REPEAT_RELEASE_DAYS = [7, 14, 30];
 
 function assertAdmin(request) {
   const email = request.auth && request.auth.token && request.auth.token.email;
@@ -45,6 +46,24 @@ function planRepeatCredits(plan) {
 
 function rewardAmount(order, rate) {
   return Number((Number(order.amount || 0) * (Number(rate || 0) / 100)).toFixed(2));
+}
+
+function createReleasePlan(totalAmount, paidAt) {
+  const amount = Number(totalAmount || 0);
+  let remaining = amount;
+  return REPEAT_RELEASE_DAYS.map((days, index) => {
+    const isLast = index === REPEAT_RELEASE_DAYS.length - 1;
+    const partAmount = isLast
+      ? remaining
+      : Number((amount / REPEAT_RELEASE_DAYS.length).toFixed(2));
+    remaining = Number((remaining - partAmount).toFixed(2));
+    return {
+      amount: partAmount,
+      releaseAt: addDays(paidAt, days),
+      released: false,
+      releasedAt: "",
+    };
+  });
 }
 
 function createAdminLog(tx, action, target, detail, adminEmail) {
@@ -227,6 +246,7 @@ exports.confirmOrder = onCall(async (request) => {
           createdAt: paidAt,
         });
 
+        const repeatRewardAmount = rewardAmount(order, rate);
         createReward(tx, {
           userId: repeatReceiver.id,
           sourceUserId: order.userId,
@@ -234,7 +254,9 @@ exports.confirmOrder = onCall(async (request) => {
           type: "repeat",
           rewardMode: "pool",
           rate,
-          amount: rewardAmount(order, rate),
+          amount: repeatRewardAmount,
+          releasedAmount: 0,
+          releasePlan: createReleasePlan(repeatRewardAmount, paidAt),
           createdAt: paidAt,
         });
       }
