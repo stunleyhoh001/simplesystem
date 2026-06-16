@@ -884,9 +884,21 @@ function repeatCreditReasonText(reason) {
   }[reason] || reason || "-";
 }
 
+function ensureRepeatCreditLogActions() {
+  if (document.querySelector("#exportRepeatCreditLogsBtn")) return;
+  const table = document.querySelector("#repeatCreditLogTable");
+  const wrap = table?.closest(".table-wrap");
+  if (!wrap?.parentNode) return;
+  const actions = document.createElement("div");
+  actions.className = "repeat-log-actions";
+  actions.innerHTML = `<button id="exportRepeatCreditLogsBtn" class="button ghost" type="button">导出资格流水</button>`;
+  wrap.parentNode.insertBefore(actions, wrap);
+}
+
 function renderRepeatCreditLogs() {
   const table = document.querySelector("#repeatCreditLogTable");
   if (!table) return;
+  ensureRepeatCreditLogActions();
   const rows = (state.repeatCreditLogs || [])
     .slice()
     .sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt))
@@ -1311,6 +1323,33 @@ document.querySelector("#exportUsersBtn")?.addEventListener("click", () => {
         user.repeatCredits || 0,
         statusLabel,
         user.frozen ? "已冻结" : "正常",
+      ];
+    })
+  );
+});
+
+document.addEventListener("click", (event) => {
+  if (event.target?.id !== "exportRepeatCreditLogsBtn") return;
+  if (!requireAdmin()) return;
+  const logs = (state.repeatCreditLogs || [])
+    .slice()
+    .sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
+  downloadCsv(
+    `amsystem-repeat-credit-logs-${new Date().toISOString().slice(0, 10)}.csv`,
+    ["流水ID", "时间", "用户ID", "用户", "账号", "变动", "余额", "原因", "来源", "备注"],
+    logs.map((log) => {
+      const user = findUser(log.userId);
+      return [
+        log.id,
+        log.createdAt,
+        log.userId,
+        user?.name || "",
+        user?.account || "",
+        log.change || 0,
+        log.balance || 0,
+        repeatCreditReasonText(log.reason),
+        log.source || "",
+        log.note || "",
       ];
     })
   );
