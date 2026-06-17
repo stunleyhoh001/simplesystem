@@ -25,7 +25,7 @@ import {
 } from "https://www.gstatic.com/firebasejs/10.12.5/firebase-storage.js";
 
 const STORAGE_KEY = "amsystemFirebaseFallback";
-const APP_VERSION = "20260617-37";
+const APP_VERSION = "20260617-38";
 const SYSTEM_DOC_PATH = ["amsystem", "main"];
 const USER_COLLECTION = "amsystemUsers";
 const ORDER_COLLECTION = "amsystemOrders";
@@ -2086,6 +2086,19 @@ function addRepeatCreditLog(data, userId, change, balance, reason, source = "", 
   });
 }
 
+function exportStamp(date = new Date()) {
+  const pad = (value) => String(value).padStart(2, "0");
+  return [
+    date.getFullYear(),
+    pad(date.getMonth() + 1),
+    pad(date.getDate()),
+    "-",
+    pad(date.getHours()),
+    pad(date.getMinutes()),
+    pad(date.getSeconds()),
+  ].join("");
+}
+
 function exportBundle() {
   const paidOrders = (state.orders || []).filter((order) => order.status === "paid");
   const readiness = readinessChecks();
@@ -2117,7 +2130,7 @@ function exportBundle() {
   const url = URL.createObjectURL(blob);
   const link = document.createElement("a");
   link.href = url;
-  link.download = `amsystem-backup-${new Date().toISOString().slice(0, 10)}.json`;
+  link.download = `amsystem-backup-${exportStamp()}.json`;
   link.click();
   URL.revokeObjectURL(url);
 }
@@ -2126,7 +2139,7 @@ function exportRiskReport() {
   const checks = readinessChecks();
   const issues = dataIntegrityIssues(state);
   downloadCsv(
-    `amsystem-risk-report-${new Date().toISOString().slice(0, 10)}.csv`,
+    `amsystem-risk-report-${exportStamp()}.csv`,
     ["类型", "状态", "项目", "详情"],
     [
       ...checks.map((check) => ["自检", check.ok ? "通过" : "待处理", check.label, check.detail]),
@@ -2483,7 +2496,7 @@ document.addEventListener("click", async (event) => {
 document.querySelector("#exportUsersBtn")?.addEventListener("click", () => {
   if (!requireAdmin()) return;
   downloadCsv(
-    `amsystem-users-${new Date().toISOString().slice(0, 10)}.csv`,
+    `amsystem-users-${exportStamp()}.csv`,
     ["用户ID", "姓名", "账号", "手机", "邀请码", "推荐人", "积分", "推荐名额", "已用名额", "复购资格", "配套状态", "账号状态"],
     filteredUsers().map((user) => {
       const referrer = findUser(user.referrerId);
@@ -2511,7 +2524,7 @@ document.addEventListener("click", (event) => {
   if (!requireAdmin()) return;
   const logs = filteredRepeatCreditLogs();
   downloadCsv(
-    `amsystem-repeat-credit-logs-${new Date().toISOString().slice(0, 10)}.csv`,
+    `amsystem-repeat-credit-logs-${exportStamp()}.csv`,
     ["流水ID", "时间", "用户ID", "用户", "账号", "变动", "余额", "原因", "来源", "备注"],
     logs.map((log) => {
       const user = findUser(log.userId);
@@ -2534,7 +2547,7 @@ document.addEventListener("click", (event) => {
 document.querySelector("#exportOrdersBtn")?.addEventListener("click", () => {
   if (!requireAdmin()) return;
   downloadCsv(
-    `amsystem-orders-${new Date().toISOString().slice(0, 10)}.csv`,
+    `amsystem-orders-${exportStamp()}.csv`,
     ["订单号", "用户", "配套", "类型", "金额", "付款方式", "付款参考号", "状态", "处理备注", "申请时间", "确认时间", "取消时间"],
     filteredOrders().map((order) => {
       const user = findUser(order.userId);
@@ -2547,7 +2560,7 @@ document.querySelector("#exportOrdersBtn")?.addEventListener("click", () => {
 document.querySelector("#exportRewardsBtn")?.addEventListener("click", () => {
   if (!requireAdmin()) return;
   downloadCsv(
-    `amsystem-rewards-${new Date().toISOString().slice(0, 10)}.csv`,
+    `amsystem-rewards-${exportStamp()}.csv`,
     ["奖励ID", "奖励人", "来源用户", "订单", "类型", "比例", "金额", "状态", "可确认日", "审核备注", "审核时间"],
     filteredRewards().map((reward) => {
       const user = findUser(reward.userId);
@@ -2560,7 +2573,7 @@ document.querySelector("#exportRewardsBtn")?.addEventListener("click", () => {
 document.querySelector("#exportWithdrawsBtn")?.addEventListener("click", () => {
   if (!requireAdmin()) return;
   downloadCsv(
-    `amsystem-withdraws-${new Date().toISOString().slice(0, 10)}.csv`,
+    `amsystem-withdraws-${exportStamp()}.csv`,
     ["提现ID", "用户", "金额", "来源", "方式", "账号", "状态", "审核备注", "申请时间", "审核时间", "打款时间"],
     filteredWithdraws().map((item) => {
       const user = findUser(item.userId);
@@ -2572,7 +2585,7 @@ document.querySelector("#exportWithdrawsBtn")?.addEventListener("click", () => {
 document.querySelector("#exportLogsBtn")?.addEventListener("click", () => {
   if (!requireAdmin()) return;
   downloadCsv(
-    `amsystem-admin-logs-${new Date().toISOString().slice(0, 10)}.csv`,
+    `amsystem-admin-logs-${exportStamp()}.csv`,
     ["日志ID", "时间", "管理员", "动作", "对象", "详情"],
     filteredLogs().map((log) => [
       log.id,
