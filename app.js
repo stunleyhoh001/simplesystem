@@ -25,7 +25,7 @@ import {
 } from "https://www.gstatic.com/firebasejs/10.12.5/firebase-storage.js";
 
 const STORAGE_KEY = "amsystemFirebaseFallback";
-const APP_VERSION = "20260617-40";
+const APP_VERSION = "20260617-41";
 const SYSTEM_DOC_PATH = ["amsystem", "main"];
 const USER_COLLECTION = "amsystemUsers";
 const ORDER_COLLECTION = "amsystemOrders";
@@ -1662,6 +1662,7 @@ function adminTodoItems() {
       detail: pendingOrders.length ? `有 ${pendingOrders.length} 笔订单等待确认付款。` : "没有待审核充值订单。",
       action: "到订单管理处理",
       tab: "adminOrders",
+      focus: "pendingOrders",
     },
     {
       title: "付款凭证异常",
@@ -1670,6 +1671,7 @@ function adminTodoItems() {
       detail: failedProofOrders.length ? `${failedProofOrders.length} 笔订单凭证上传失败，需要用户补传或后台核对。` : "没有上传失败的付款凭证。",
       action: "到订单管理查看",
       tab: "adminOrders",
+      focus: "failedProofs",
     },
     {
       title: "奖励待处理",
@@ -1678,6 +1680,7 @@ function adminTodoItems() {
       detail: dueRewards.length ? `${dueRewards.length} 笔奖励已到期可确认/释放。` : pendingRewards.length ? `${pendingRewards.length} 笔奖励仍在等待或分期中。` : "没有待处理奖励。",
       action: "到奖励审核处理",
       tab: "adminRewards",
+      focus: "pendingRewards",
     },
     {
       title: "提现待审核",
@@ -1686,6 +1689,7 @@ function adminTodoItems() {
       detail: pendingWithdraws.length ? `${pendingWithdraws.length} 笔提现申请等待审核。` : "没有待审核提现。",
       action: "到提现审核处理",
       tab: "adminWithdraws",
+      focus: "pendingWithdraws",
     },
     {
       title: "数据异常",
@@ -1694,6 +1698,7 @@ function adminTodoItems() {
       detail: integrityIssues.length ? integrityIssues.slice(0, 2).join("；") : "数据一致性正常。",
       action: "到风控规则查看",
       tab: "adminRisk",
+      focus: "integrityIssues",
     },
     {
       title: "上线自检",
@@ -1702,6 +1707,7 @@ function adminTodoItems() {
       detail: failedChecks.length ? `${failedChecks.length} 项自检待处理：${failedChecks.slice(0, 2).map((check) => check.label).join("、")}` : "上线自检全部通过。",
       action: "到风控规则查看",
       tab: "adminRisk",
+      focus: "readiness",
     },
   ];
 }
@@ -1714,7 +1720,7 @@ function renderAdminTodos() {
       <span>${item.title}</span>
       <strong>${item.count}</strong>
       <p>${item.detail}</p>
-      <button class="link" type="button" data-open-admin-tab="${item.tab}">${item.action}</button>
+      <button class="link" type="button" data-open-admin-tab="${item.tab}" data-todo-focus="${item.focus}">${item.action}</button>
     </article>
   `).join("");
 }
@@ -2292,6 +2298,7 @@ function filteredOrders() {
       order.paymentRef,
       order.paymentNote,
       paymentMethodText(order.paymentMethod),
+      proofStatusText(order),
     ].join(" ").toLowerCase();
     const matchesKeyword = !keyword || searchable.includes(keyword);
     const matchesStatus = statusFilter === "all" || order.status === statusFilter;
@@ -2481,6 +2488,34 @@ function openTab(tabId) {
   panel.classList.add("active");
 }
 
+function applyTodoFocus(focus) {
+  if (!focus) return;
+  const setValue = (selector, value) => {
+    const input = document.querySelector(selector);
+    if (input) input.value = value;
+  };
+  if (focus === "pendingOrders") {
+    setValue("#orderStatusFilter", "pending");
+    setValue("#orderTypeFilter", "all");
+    setValue("#orderSearchInput", "");
+  }
+  if (focus === "failedProofs") {
+    setValue("#orderStatusFilter", "pending");
+    setValue("#orderTypeFilter", "all");
+    setValue("#orderSearchInput", "上传失败");
+  }
+  if (focus === "pendingRewards") {
+    setValue("#rewardStatusFilter", "pending");
+    setValue("#rewardTypeFilter", "all");
+    setValue("#rewardSearchInput", "");
+  }
+  if (focus === "pendingWithdraws") {
+    setValue("#withdrawStatusFilter", "pending");
+    setValue("#withdrawSearchInput", "");
+    setValue("#withdrawMinAmount", "");
+  }
+}
+
 document.querySelectorAll(".tabs").forEach((tabs) => {
   tabs.addEventListener("click", (event) => {
     const button = event.target.closest(".tab");
@@ -2492,7 +2527,9 @@ document.querySelectorAll(".tabs").forEach((tabs) => {
 document.addEventListener("click", (event) => {
   const openAdminTab = event.target.closest("[data-open-admin-tab]");
   if (!openAdminTab) return;
+  applyTodoFocus(openAdminTab.dataset.todoFocus);
   openTab(openAdminTab.dataset.openAdminTab);
+  renderAll();
 });
 
 ["#orderStatusFilter", "#orderTypeFilter", "#rewardStatusFilter", "#rewardTypeFilter", "#withdrawStatusFilter", "#userPackageFilter", "#userAccountFilter", "#logActionFilter", "#logLimitFilter"].forEach((selector) => {
