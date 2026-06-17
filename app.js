@@ -25,7 +25,7 @@ import {
 } from "https://www.gstatic.com/firebasejs/10.12.5/firebase-storage.js";
 
 const STORAGE_KEY = "amsystemFirebaseFallback";
-const APP_VERSION = "20260617-36";
+const APP_VERSION = "20260617-37";
 const SYSTEM_DOC_PATH = ["amsystem", "main"];
 const USER_COLLECTION = "amsystemUsers";
 const ORDER_COLLECTION = "amsystemOrders";
@@ -2088,6 +2088,8 @@ function addRepeatCreditLog(data, userId, change, balance, reason, source = "", 
 
 function exportBundle() {
   const paidOrders = (state.orders || []).filter((order) => order.status === "paid");
+  const readiness = readinessChecks();
+  const integrityIssues = dataIntegrityIssues(state);
   const bundle = {
     exportedAt: new Date().toISOString(),
     appVersion: APP_VERSION,
@@ -2101,6 +2103,13 @@ function exportBundle() {
       withdraws: state.withdraws.length,
       repeatCreditLogs: (state.repeatCreditLogs || []).length,
       adminLogs: (state.adminLogs || []).length,
+      riskItems: readiness.length,
+      riskPendingItems: readiness.filter((check) => !check.ok).length,
+      integrityIssues: integrityIssues.length,
+    },
+    riskReport: {
+      checks: readiness,
+      integrityIssues,
     },
     data: state,
   };
