@@ -1170,6 +1170,13 @@ function renderMember() {
   const refInput = document.querySelector("#registerForm [name='inviteCode']");
   const urlRef = currentUrlInviteCode();
   if (refInput && urlRef && !refInput.value && urlRef !== user.inviteCode) refInput.value = urlRef;
+  if (refInput && user.referrerId) {
+    const referrer = findUser(user.referrerId);
+    refInput.value = referrer ? `已绑定：${referrer.name}` : "已绑定推荐人";
+    refInput.disabled = true;
+  } else if (refInput) {
+    refInput.disabled = false;
+  }
   renderLocalSyncHint(user);
   renderMemberProfile(user);
   ensureStorageTestButton();
@@ -2127,8 +2134,9 @@ document.querySelector("#profileForm").addEventListener("submit", async (event) 
 document.querySelector("#registerForm").addEventListener("submit", async (event) => {
   event.preventDefault();
   if (!firebaseUser) return toast("请先使用 Google 登录");
+  const formEl = event.currentTarget;
   const user = currentUser();
-  const inviteCode = inviteCodeFromInput(new FormData(event.currentTarget).get("inviteCode"));
+  const inviteCode = inviteCodeFromInput(new FormData(formEl).get("inviteCode"));
   if (!inviteCode) return toast("请输入推荐码");
   if (user.referrerId) return toast("你已经绑定推荐人，不能更换");
   const inviteSnapshot = await getDoc(doc(db, INVITE_COLLECTION, inviteCode));
@@ -2138,8 +2146,8 @@ document.querySelector("#registerForm").addEventListener("submit", async (event)
   if (invite.frozen) return toast("推荐人账号暂不可绑定");
   user.referrerId = invite.userId;
   state.referrals = referralDocsForState(state);
-  event.currentTarget.reset();
   await saveState();
+  formEl.reset();
   renderAll();
   toast("推荐人已绑定");
 });
