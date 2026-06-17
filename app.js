@@ -25,7 +25,7 @@ import {
 } from "https://www.gstatic.com/firebasejs/10.12.5/firebase-storage.js";
 
 const STORAGE_KEY = "amsystemFirebaseFallback";
-const APP_VERSION = "20260617-47";
+const APP_VERSION = "20260617-48";
 const WITHDRAW_COOLDOWN_HOURS = 24;
 const SYSTEM_DOC_PATH = ["amsystem", "main"];
 const USER_COLLECTION = "amsystemUsers";
@@ -1158,6 +1158,7 @@ function orderConfirmPreview(order) {
   const plan = findPlan(order.planId);
   if (!user || !plan) return "订单资料不完整，仍要继续确认吗？";
   const previewType = actualOrderType(state, order.userId, order.id);
+  const risks = orderRiskLabels(order);
   const lines = [
     `确认订单：${order.id}`,
     `用户：${user.name} / ${user.account}`,
@@ -1165,6 +1166,13 @@ function orderConfirmPreview(order) {
     `处理类型：${previewType === "first" ? "首充" : "复购"}`,
     `积分：+${points(plan.points)}`,
   ];
+  if (risks.length) {
+    lines.push("");
+    lines.push("风控提醒：");
+    risks.forEach((risk) => lines.push(`- ${risk}`));
+    lines.push("请先确认不是重复付款或重复凭证。");
+    lines.push("");
+  }
   if (previewType === "repeat") {
     const receiver = nextRepeatReceiver(state, user.id);
     const reward = +(order.amount * (Number(plan.repeatRate || 0) / 100)).toFixed(2);
@@ -3198,7 +3206,8 @@ document.body.addEventListener("click", async (event) => {
     const order = state.orders.find((item) => item.id === confirmOrder.dataset.confirmOrder);
     if (!order || order.status !== "pending") return toast("订单状态不可确认");
     if (!window.confirm(orderConfirmPreview(order))) return;
-    const note = window.prompt("请输入确认付款备注（可留空）", order.reviewNote || "");
+    const riskNote = orderRiskLabels(order).length ? "已核对风控风险：" : "";
+    const note = window.prompt("请输入确认付款备注（可留空）", order.reviewNote || riskNote);
     if (note === null) return;
     order.reviewNote = note.trim();
     order.reviewedAt = new Date().toISOString();
