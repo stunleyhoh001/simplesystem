@@ -75,7 +75,15 @@ let firebaseUser = null;
 let state = null;
 let syncMessage = "Firestore：等待检测";
 
+function isIgnorableSdkError(message) {
+  return String(message || "").includes("INTERNAL ASSERTION FAILED: Pending promise was never set");
+}
+
 window.addEventListener("error", (event) => {
+  if (isIgnorableSdkError(event.message)) {
+    event.preventDefault();
+    return;
+  }
   const status = document.querySelector("#authStatus");
   if (status) status.textContent = `脚本错误：${event.message}`;
 });
@@ -83,6 +91,10 @@ window.addEventListener("error", (event) => {
 window.addEventListener("unhandledrejection", (event) => {
   const status = document.querySelector("#authStatus");
   const message = event.reason?.message || event.reason?.code || "未知异步错误";
+  if (isIgnorableSdkError(message)) {
+    event.preventDefault();
+    return;
+  }
   if (status) status.textContent = `异步错误：${message}`;
 });
 
@@ -1168,14 +1180,17 @@ function renderMember() {
   document.querySelector("#inviteLink").textContent = inviteLink;
   renderInviteCodeBox(user);
   const refInput = document.querySelector("#registerForm [name='inviteCode']");
+  const refButton = document.querySelector("#registerForm button[type='submit']");
   const urlRef = currentUrlInviteCode();
   if (refInput && urlRef && !refInput.value && urlRef !== user.inviteCode) refInput.value = urlRef;
   if (refInput && user.referrerId) {
     const referrer = findUser(user.referrerId);
     refInput.value = referrer ? `已绑定：${referrer.name}` : "已绑定推荐人";
     refInput.disabled = true;
+    if (refButton) refButton.disabled = true;
   } else if (refInput) {
     refInput.disabled = false;
+    if (refButton) refButton.disabled = false;
   }
   renderLocalSyncHint(user);
   renderMemberProfile(user);
@@ -1226,7 +1241,12 @@ function renderInviteCodeBox(user) {
     codeBox.className = "referral-code-box";
     inviteLinkBox.insertAdjacentElement("beforebegin", codeBox);
   }
-  codeBox.innerHTML = `<span>我的推荐码</span><strong>${user.inviteCode}</strong><small>朋友也可以直接输入这个推荐码绑定。</small>`;
+  codeBox.innerHTML = `
+    <span>我的推荐码</span>
+    <strong>${user.inviteCode}</strong>
+    <small>朋友也可以直接输入这个推荐码绑定。</small>
+    <button class="button ghost compact-button" type="button" data-copy-invite-code="${user.inviteCode}">复制推荐码</button>
+  `;
 }
 
 function ensureWithdrawBreakdownBox() {
@@ -2255,6 +2275,13 @@ document.querySelector("#confirmDueBtn").addEventListener("click", async () => {
 });
 
 document.body.addEventListener("click", async (event) => {
+  const copyInviteCode = event.target.closest("[data-copy-invite-code]");
+  if (copyInviteCode) {
+    await navigator.clipboard.writeText(copyInviteCode.dataset.copyInviteCode);
+    toast("推荐码已复制");
+    return;
+  }
+
   const retryProof = event.target.closest("[data-retry-proof]");
   if (retryProof) {
     if (!firebaseUser) return toast("请先使用 Google 登录");
