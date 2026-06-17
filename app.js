@@ -25,7 +25,7 @@ import {
 } from "https://www.gstatic.com/firebasejs/10.12.5/firebase-storage.js";
 
 const STORAGE_KEY = "amsystemFirebaseFallback";
-const APP_VERSION = "20260617-25";
+const APP_VERSION = "20260617-26";
 const SYSTEM_DOC_PATH = ["amsystem", "main"];
 const USER_COLLECTION = "amsystemUsers";
 const ORDER_COLLECTION = "amsystemOrders";
@@ -1041,6 +1041,37 @@ function orderConfirmPreview(order) {
   return lines.join("\n");
 }
 
+function orderDetailText(order) {
+  const user = findUser(order.userId);
+  const plan = findPlan(order.planId);
+  if (!order || !user || !plan) return "订单资料不完整";
+  const resolvedType = order.status === "pending" ? actualOrderType(state, order.userId, order.id) : order.type;
+  const rewards = (state.rewards || []).filter((reward) => reward.orderId === order.id);
+  const rewardLines = rewards.length
+    ? rewards.map((reward) => {
+      const owner = findUser(reward.userId);
+      return `- ${rewardTypeText(reward)}：${owner?.name || reward.userId} / ${rewardAmountText(reward)} / ${labelStatus(reward.status)}`;
+    })
+    : ["- 暂无奖励记录"];
+  const receiver = resolvedType === "repeat" ? nextRepeatReceiver(state, order.userId) : null;
+  return [
+    `订单：${order.id}`,
+    `用户：${user.name} / ${user.account}`,
+    `配套：${plan.name}`,
+    `金额：${money(order.amount)}`,
+    `状态：${labelStatus(order.status)}`,
+    `当前判定：${resolvedType === "first" ? "首充" : "复购"}`,
+    `付款：${paymentMethodText(order.paymentMethod)} / ${order.paymentRef || "-"}`,
+    `凭证：${proofStatusText(order)}`,
+    `积分：${points(order.points || 0)} / 确认后应发 ${points(plan.points)}`,
+    resolvedType === "first"
+      ? `首充奖励对象：${user.referrerId ? (findUser(user.referrerId)?.name || user.referrerId) : "无推荐人"}`
+      : `资格池接收人：${receiver ? `${receiver.name}（资格 ${receiver.repeatCredits}）` : "暂无"}`,
+    "现有奖励记录：",
+    ...rewardLines,
+  ].join("\n");
+}
+
 function labelStatus(status) {
   if (status === "releasing") return "分期释放中";
   return {
@@ -1708,6 +1739,7 @@ function renderAdminOrders() {
     const typeWarning = order.status === "pending" && order.type !== resolvedType
       ? ` <span class="tag warning">将按${resolvedType === "first" ? "首充" : "复购"}确认</span>`
       : "";
+    const detailAction = `<button class="link" data-order-detail="${order.id}">详情</button>`;
     const actions = order.status === "pending"
       ? `<button class="link" data-confirm-order="${order.id}">确认付款</button><button class="link" data-cancel-order="${order.id}">取消订单</button>`
       : order.status === "paid"
@@ -1717,7 +1749,7 @@ function renderAdminOrders() {
     const proofLink = proofHref ? ` / <a class="link" href="${proofHref}" target="_blank" rel="noopener">查看凭证</a>` : "";
     const proofText = ` / ${proofStatusText(order)}`;
     const paymentText = `${paymentMethodText(order.paymentMethod)} ${order.paymentRef || ""}${order.paymentNote ? ` / ${order.paymentNote}` : ""}${proofText}${proofLink}`.trim() || "-";
-    return `<tr><td>${order.id}</td><td>${user?.name || "-"}</td><td>${plan?.name || "-"}</td><td>${resolvedType === "first" ? "首充" : "复购"}${typeWarning}</td><td>${money(order.amount)}</td><td>${paymentText}</td><td>${points(order.points)}</td><td><span class="tag ${order.status}">${labelStatus(order.status)}</span></td><td>${new Date(order.createdAt).toLocaleString("zh-CN")}</td><td class="actions">${actions}</td></tr>`;
+    return `<tr><td>${order.id}</td><td>${user?.name || "-"}</td><td>${plan?.name || "-"}</td><td>${resolvedType === "first" ? "首充" : "复购"}${typeWarning}</td><td>${money(order.amount)}</td><td>${paymentText}</td><td>${points(order.points)}</td><td><span class="tag ${order.status}">${labelStatus(order.status)}</span></td><td>${new Date(order.createdAt).toLocaleString("zh-CN")}</td><td class="actions">${detailAction}${actions}</td></tr>`;
   }).join("");
   document.querySelector("#adminOrderTable").innerHTML = rows || `<tr><td colspan="10">没有符合条件的订单</td></tr>`;
 }
@@ -2446,6 +2478,15 @@ document.querySelector("#confirmDueBtn").addEventListener("click", async () => {
 });
 
 document.body.addEventListener("click", async (event) => {
+  const orderDetail = event.target.closest("[data-order-detail]");
+  if (orderDetail) {
+    if (!requireAdmin()) return;
+    const order = state.orders.find((item) => item.id === orderDetail.dataset.orderDetail);
+    if (!order) return toast("找不到订单");
+    window.alert(orderDetailText(order));
+    return;
+  }
+
   const editPlan = event.target.closest("[data-edit-plan]");
   if (editPlan) {
     if (!requireAdmin()) return;
