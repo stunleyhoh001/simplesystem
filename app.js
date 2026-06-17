@@ -25,7 +25,7 @@ import {
 } from "https://www.gstatic.com/firebasejs/10.12.5/firebase-storage.js";
 
 const STORAGE_KEY = "amsystemFirebaseFallback";
-const APP_VERSION = "20260617-29";
+const APP_VERSION = "20260617-30";
 const SYSTEM_DOC_PATH = ["amsystem", "main"];
 const USER_COLLECTION = "amsystemUsers";
 const ORDER_COLLECTION = "amsystemOrders";
@@ -1050,7 +1050,7 @@ function orderDetailText(order) {
   const rewardLines = rewards.length
     ? rewards.map((reward) => {
       const owner = findUser(reward.userId);
-      return `- ${rewardTypeText(reward)}：${owner?.name || reward.userId} / ${rewardAmountText(reward)} / ${labelStatus(reward.status)}`;
+      return `- ${rewardTypeText(reward)}：${owner?.name || reward.userId} / ${rewardAmountText(reward)} / ${labelStatus(reward.status)} / 备注：${reward.reviewNote || "-"}`;
     })
     : ["- 暂无奖励记录"];
   const receiver = resolvedType === "repeat" ? nextRepeatReceiver(state, order.userId) : null;
@@ -1824,7 +1824,7 @@ function renderAdminRewards() {
     const user = findUser(reward.userId);
     const sourceUser = findUser(reward.sourceUserId);
     const canConfirm = ["pending", "releasing"].includes(reward.status) && new Date(reward.confirmAfter) <= new Date();
-    return `<tr><td>${user?.name || "-"}</td><td>${sourceUser?.name || "-"}</td><td>${reward.orderId}</td><td>${reward.type === "first" ? "首充" : "复购"}</td><td>${rewardAmountText(reward)}</td><td><span class="tag ${reward.status}">${labelStatus(reward.status)}</span></td><td>${rewardNextDateText(reward)}</td><td class="actions">${canConfirm ? `<button class="link" data-confirm-reward="${reward.id}">确认</button>` : ""}${["pending", "releasing"].includes(reward.status) ? `<button class="link" data-cancel-reward="${reward.id}">取消</button><button class="link" data-freeze-reward="${reward.id}">冻结</button>` : ""}</td></tr>`;
+    return `<tr><td>${user?.name || "-"}</td><td>${sourceUser?.name || "-"}</td><td>${reward.orderId}</td><td>${reward.type === "first" ? "首充" : "复购"}</td><td>${rewardAmountText(reward)}${reward.reviewNote ? `<span class="muted-line">备注：${reward.reviewNote}</span>` : ""}</td><td><span class="tag ${reward.status}">${labelStatus(reward.status)}</span></td><td>${rewardNextDateText(reward)}</td><td class="actions">${canConfirm ? `<button class="link" data-confirm-reward="${reward.id}">确认</button>` : ""}${["pending", "releasing"].includes(reward.status) ? `<button class="link" data-cancel-reward="${reward.id}">取消</button><button class="link" data-freeze-reward="${reward.id}">冻结</button>` : ""}</td></tr>`;
   }).join("");
   document.querySelector("#adminRewardTable").innerHTML = rows || `<tr><td colspan="8">没有符合条件的奖励</td></tr>`;
 }
@@ -2362,11 +2362,11 @@ document.querySelector("#exportRewardsBtn")?.addEventListener("click", () => {
   if (!requireAdmin()) return;
   downloadCsv(
     `amsystem-rewards-${new Date().toISOString().slice(0, 10)}.csv`,
-    ["奖励ID", "奖励人", "来源用户", "订单", "类型", "比例", "金额", "状态", "可确认日"],
+    ["奖励ID", "奖励人", "来源用户", "订单", "类型", "比例", "金额", "状态", "可确认日", "审核备注", "审核时间"],
     filteredRewards().map((reward) => {
       const user = findUser(reward.userId);
       const sourceUser = findUser(reward.sourceUserId);
-      return [reward.id, user?.name || "", sourceUser?.name || "", reward.orderId, rewardTypeText(reward), reward.rate, rewardAmountText(reward), labelStatus(reward.status), rewardNextDateText(reward)];
+      return [reward.id, user?.name || "", sourceUser?.name || "", reward.orderId, rewardTypeText(reward), reward.rate, rewardAmountText(reward), labelStatus(reward.status), rewardNextDateText(reward), reward.reviewNote || "", reward.reviewedAt || ""];
     })
   );
 });
@@ -2741,6 +2741,9 @@ document.body.addEventListener("click", async (event) => {
     if (!requireAdmin()) return;
     const rewardId = rewardAction.dataset.confirmReward || rewardAction.dataset.cancelReward || rewardAction.dataset.freezeReward;
     const reward = state.rewards.find((item) => item.id === rewardId);
+    const actionLabel = rewardAction.dataset.confirmReward ? "确认" : rewardAction.dataset.cancelReward ? "取消" : "冻结";
+    const note = window.prompt(`请输入奖励${actionLabel}备注（可留空）`, reward.reviewNote || "");
+    if (note === null) return;
     if (rewardAction.dataset.confirmReward) {
       if (Array.isArray(reward.releasePlan)) {
         releaseDueRewardParts(reward);
@@ -2750,7 +2753,9 @@ document.body.addEventListener("click", async (event) => {
     }
     if (rewardAction.dataset.cancelReward) reward.status = "cancelled";
     if (rewardAction.dataset.freezeReward) reward.status = "frozen";
-    addAdminLog("更新奖励状态", reward.orderId, `${reward.status} / ${money(reward.amount)}`);
+    reward.reviewNote = note.trim();
+    reward.reviewedAt = new Date().toISOString();
+    addAdminLog("更新奖励状态", reward.orderId, `${actionLabel} / ${reward.status} / ${money(reward.amount)} / ${reward.reviewNote || "无备注"}`);
     await saveState();
     renderAll();
     toast("奖励状态已更新");
