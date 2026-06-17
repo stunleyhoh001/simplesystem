@@ -25,7 +25,7 @@ import {
 } from "https://www.gstatic.com/firebasejs/10.12.5/firebase-storage.js";
 
 const STORAGE_KEY = "amsystemFirebaseFallback";
-const APP_VERSION = "20260617-46";
+const APP_VERSION = "20260617-47";
 const WITHDRAW_COOLDOWN_HOURS = 24;
 const SYSTEM_DOC_PATH = ["amsystem", "main"];
 const USER_COLLECTION = "amsystemUsers";
@@ -1113,6 +1113,7 @@ function nextRepeatReceiver(data, buyerId) {
 
 function canRecalculateOrderRewards(order) {
   const rewards = (state.rewards || []).filter((reward) => reward.orderId === order.id);
+  const risks = orderRiskLabels(order);
   return rewards.every((reward) => reward.status === "pending");
 }
 
@@ -1203,6 +1204,7 @@ function orderDetailText(order) {
     `当前判定：${resolvedType === "first" ? "首充" : "复购"}`,
     `付款：${paymentMethodText(order.paymentMethod)} / ${order.paymentRef || "-"}`,
     `凭证：${proofStatusText(order)}`,
+    `风控风险：${risks.length ? risks.join("；") : "无"}`,
     `处理备注：${order.reviewNote || "-"}`,
     `积分：${points(order.points || 0)} / 确认后应发 ${points(plan.points)}`,
     `确认时间：${order.reviewedAt ? new Date(order.reviewedAt).toLocaleString("zh-CN") : "-"}`,
@@ -2840,11 +2842,26 @@ document.querySelector("#exportOrdersBtn")?.addEventListener("click", () => {
   if (!requireAdmin()) return;
   downloadCsv(
     `amsystem-orders-${exportStamp()}.csv`,
-    ["订单号", "用户", "配套", "类型", "金额", "付款方式", "付款参考号", "状态", "处理备注", "申请时间", "确认时间", "取消时间"],
+    ["订单号", "用户", "配套", "类型", "金额", "付款方式", "付款参考号", "凭证状态", "风险提示", "状态", "处理备注", "申请时间", "确认时间", "取消时间"],
     filteredOrders().map((order) => {
       const user = findUser(order.userId);
       const plan = findPlan(order.planId);
-      return [order.id, user?.name || "", plan?.name || "", order.type, order.amount, paymentMethodText(order.paymentMethod), order.paymentRef || "", labelStatus(order.status), order.reviewNote || "", order.createdAt, order.reviewedAt || order.paidAt || "", order.cancelledAt || ""];
+      return [
+        order.id,
+        user?.name || "",
+        plan?.name || "",
+        order.type,
+        order.amount,
+        paymentMethodText(order.paymentMethod),
+        order.paymentRef || "",
+        proofStatusText(order),
+        orderRiskLabels(order).join("；"),
+        labelStatus(order.status),
+        order.reviewNote || "",
+        order.createdAt,
+        order.reviewedAt || order.paidAt || "",
+        order.cancelledAt || "",
+      ];
     })
   );
 });
