@@ -25,7 +25,7 @@ import {
 } from "https://www.gstatic.com/firebasejs/10.12.5/firebase-storage.js";
 
 const STORAGE_KEY = "amsystemFirebaseFallback";
-const APP_VERSION = "20260617-35";
+const APP_VERSION = "20260617-36";
 const SYSTEM_DOC_PATH = ["amsystem", "main"];
 const USER_COLLECTION = "amsystemUsers";
 const ORDER_COLLECTION = "amsystemOrders";
@@ -2113,6 +2113,19 @@ function exportBundle() {
   URL.revokeObjectURL(url);
 }
 
+function exportRiskReport() {
+  const checks = readinessChecks();
+  const issues = dataIntegrityIssues(state);
+  downloadCsv(
+    `amsystem-risk-report-${new Date().toISOString().slice(0, 10)}.csv`,
+    ["类型", "状态", "项目", "详情"],
+    [
+      ...checks.map((check) => ["自检", check.ok ? "通过" : "待处理", check.label, check.detail]),
+      ...issues.map((issue) => ["数据一致性", "异常", "明细", issue]),
+    ]
+  );
+}
+
 function csvEscape(value) {
   const text = String(value ?? "");
   return `"${text.replace(/"/g, '""')}"`;
@@ -2972,6 +2985,15 @@ document.querySelector("#exportBtn").addEventListener("click", () => {
   if (!requireAdmin()) return;
   exportBundle();
   toast("完整备份包已导出");
+});
+
+document.querySelector("#exportRiskReportBtn")?.addEventListener("click", async () => {
+  if (!requireAdmin()) return;
+  exportRiskReport();
+  addAdminLog("导出异常报告", "风控规则", "导出上线自检与数据一致性报告");
+  await saveState();
+  renderAll();
+  toast("异常报告已导出");
 });
 
 document.querySelector("#resetBtn").addEventListener("click", async () => {
