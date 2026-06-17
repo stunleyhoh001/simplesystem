@@ -25,7 +25,7 @@ import {
 } from "https://www.gstatic.com/firebasejs/10.12.5/firebase-storage.js";
 
 const STORAGE_KEY = "amsystemFirebaseFallback";
-const APP_VERSION = "20260617-26";
+const APP_VERSION = "20260617-27";
 const SYSTEM_DOC_PATH = ["amsystem", "main"];
 const USER_COLLECTION = "amsystemUsers";
 const ORDER_COLLECTION = "amsystemOrders";
@@ -1072,6 +1072,29 @@ function orderDetailText(order) {
   ].join("\n");
 }
 
+function withdrawDetailText(withdraw) {
+  const user = findUser(withdraw.userId);
+  if (!withdraw || !user) return "提现资料不完整";
+  const breakdown = withdrawBreakdown(user.id);
+  return [
+    `提现申请：${withdraw.id}`,
+    `用户：${user.name} / ${user.account}`,
+    `申请金额：${money(withdraw.amount)}`,
+    `来源：${withdraw.source === "reward" ? "奖励提现" : withdraw.source || "-"}`,
+    `状态：${labelStatus(withdraw.status)}`,
+    `收款方式：${withdraw.method || "-"}`,
+    `收款账号：${withdraw.account || "-"}`,
+    `提交时间：${new Date(withdraw.createdAt).toLocaleString("zh-CN")}`,
+    "",
+    "当前奖励提现组成：",
+    `首充奖励可提现：${money(breakdown.first)}`,
+    `复购奖励已释放：${money(breakdown.repeatReleased)}`,
+    `复购奖励待释放：${money(breakdown.pendingRelease)}`,
+    `已申请/处理中：${money(breakdown.requested)}`,
+    `当前可提现余额：${money(breakdown.available)}`,
+  ].join("\n");
+}
+
 function labelStatus(status) {
   if (status === "releasing") return "分期释放中";
   return {
@@ -1769,7 +1792,8 @@ function renderAdminWithdraws() {
   const withdraws = filteredWithdraws();
   const rows = withdraws.slice().reverse().map((item) => {
     const user = findUser(item.userId);
-    return `<tr><td>${item.id}</td><td>${user?.name || "-"}</td><td>${money(item.amount)}</td><td>${item.source === "reward" ? "奖励提现" : item.source || "-"}</td><td>${item.method}</td><td>${item.account}</td><td><span class="tag ${item.status}">${labelStatus(item.status)}</span></td><td>${new Date(item.createdAt).toLocaleString("zh-CN")}</td><td class="actions">${item.status === "pending" ? `<button class="link" data-approve-withdraw="${item.id}">通过</button><button class="link" data-reject-withdraw="${item.id}">拒绝</button>` : ""}${item.status === "approved" ? `<button class="link" data-pay-withdraw="${item.id}">标记打款</button>` : ""}</td></tr>`;
+    const detailAction = `<button class="link" data-withdraw-detail="${item.id}">详情</button>`;
+    return `<tr><td>${item.id}</td><td>${user?.name || "-"}</td><td>${money(item.amount)}</td><td>${item.source === "reward" ? "奖励提现" : item.source || "-"}</td><td>${item.method}</td><td>${item.account}</td><td><span class="tag ${item.status}">${labelStatus(item.status)}</span></td><td>${new Date(item.createdAt).toLocaleString("zh-CN")}</td><td class="actions">${detailAction}${item.status === "pending" ? `<button class="link" data-approve-withdraw="${item.id}">通过</button><button class="link" data-reject-withdraw="${item.id}">拒绝</button>` : ""}${item.status === "approved" ? `<button class="link" data-pay-withdraw="${item.id}">标记打款</button>` : ""}</td></tr>`;
   }).join("");
   document.querySelector("#adminWithdrawTable").innerHTML = rows || `<tr><td colspan="9">没有符合条件的提现申请</td></tr>`;
 }
@@ -2484,6 +2508,15 @@ document.body.addEventListener("click", async (event) => {
     const order = state.orders.find((item) => item.id === orderDetail.dataset.orderDetail);
     if (!order) return toast("找不到订单");
     window.alert(orderDetailText(order));
+    return;
+  }
+
+  const withdrawDetail = event.target.closest("[data-withdraw-detail]");
+  if (withdrawDetail) {
+    if (!requireAdmin()) return;
+    const withdraw = state.withdraws.find((item) => item.id === withdrawDetail.dataset.withdrawDetail);
+    if (!withdraw) return toast("找不到提现申请");
+    window.alert(withdrawDetailText(withdraw));
     return;
   }
 
