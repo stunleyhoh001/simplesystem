@@ -25,7 +25,7 @@ import {
 } from "https://www.gstatic.com/firebasejs/10.12.5/firebase-storage.js";
 
 const STORAGE_KEY = "amsystemFirebaseFallback";
-const APP_VERSION = "20260617-30";
+const APP_VERSION = "20260617-31";
 const SYSTEM_DOC_PATH = ["amsystem", "main"];
 const USER_COLLECTION = "amsystemUsers";
 const ORDER_COLLECTION = "amsystemOrders";
@@ -1063,7 +1063,10 @@ function orderDetailText(order) {
     `当前判定：${resolvedType === "first" ? "首充" : "复购"}`,
     `付款：${paymentMethodText(order.paymentMethod)} / ${order.paymentRef || "-"}`,
     `凭证：${proofStatusText(order)}`,
+    `处理备注：${order.reviewNote || "-"}`,
     `积分：${points(order.points || 0)} / 确认后应发 ${points(plan.points)}`,
+    `确认时间：${order.reviewedAt ? new Date(order.reviewedAt).toLocaleString("zh-CN") : "-"}`,
+    `取消时间：${order.cancelledAt ? new Date(order.cancelledAt).toLocaleString("zh-CN") : "-"}`,
     resolvedType === "first"
       ? `首充奖励对象：${user.referrerId ? (findUser(user.referrerId)?.name || user.referrerId) : "无推荐人"}`
       : `资格池接收人：${receiver ? `${receiver.name}（资格 ${receiver.repeatCredits}）` : "暂无"}`,
@@ -2349,11 +2352,11 @@ document.querySelector("#exportOrdersBtn")?.addEventListener("click", () => {
   if (!requireAdmin()) return;
   downloadCsv(
     `amsystem-orders-${new Date().toISOString().slice(0, 10)}.csv`,
-    ["订单号", "用户", "配套", "类型", "金额", "付款方式", "付款参考号", "状态", "时间"],
+    ["订单号", "用户", "配套", "类型", "金额", "付款方式", "付款参考号", "状态", "处理备注", "申请时间", "确认时间", "取消时间"],
     filteredOrders().map((order) => {
       const user = findUser(order.userId);
       const plan = findPlan(order.planId);
-      return [order.id, user?.name || "", plan?.name || "", order.type, order.amount, paymentMethodText(order.paymentMethod), order.paymentRef || "", labelStatus(order.status), order.createdAt];
+      return [order.id, user?.name || "", plan?.name || "", order.type, order.amount, paymentMethodText(order.paymentMethod), order.paymentRef || "", labelStatus(order.status), order.reviewNote || "", order.createdAt, order.reviewedAt || order.paidAt || "", order.cancelledAt || ""];
     })
   );
 });
@@ -2680,15 +2683,25 @@ document.body.addEventListener("click", async (event) => {
     const order = state.orders.find((item) => item.id === confirmOrder.dataset.confirmOrder);
     if (!order || order.status !== "pending") return toast("订单状态不可确认");
     if (!window.confirm(orderConfirmPreview(order))) return;
+    const note = window.prompt("请输入确认付款备注（可留空）", order.reviewNote || "");
+    if (note === null) return;
+    order.reviewNote = note.trim();
+    order.reviewedAt = new Date().toISOString();
     try {
       await callConfirmOrderFunction(order.id);
       state = await loadState();
+      const syncedOrder = state.orders.find((item) => item.id === order.id);
+      if (syncedOrder) {
+        syncedOrder.reviewNote = order.reviewNote;
+        syncedOrder.reviewedAt = order.reviewedAt;
+        await saveState();
+      }
       renderAll();
       toast("订单已由云函数确认，积分和奖励已生成");
     } catch (error) {
       console.error(error);
       applyPaidOrder(state, order);
-      addAdminLog("确认付款", order.id, `金额 ${money(order.amount)} / 前端管理员确认`);
+      addAdminLog("确认付款", order.id, `金额 ${money(order.amount)} / 前端管理员确认 / ${order.reviewNote || "无备注"}`);
       await saveState();
       renderAll();
       toast("云函数未启用，已使用管理员前端确认付款");
@@ -2701,8 +2714,12 @@ document.body.addEventListener("click", async (event) => {
     if (!requireAdmin()) return;
     const order = state.orders.find((item) => item.id === cancelOrder.dataset.cancelOrder);
     if (!order || order.status !== "pending") return toast("订单状态不可取消");
+    const note = window.prompt("请输入取消订单原因（可留空）", order.reviewNote || "");
+    if (note === null) return;
     order.status = "cancelled";
-    addAdminLog("取消订单", order.id, `金额 ${money(order.amount)}`);
+    order.reviewNote = note.trim();
+    order.cancelledAt = new Date().toISOString();
+    addAdminLog("取消订单", order.id, `金额 ${money(order.amount)} / ${order.reviewNote || "无备注"}`);
     await saveState();
     renderAll();
     toast("订单已取消");
