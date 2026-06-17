@@ -308,6 +308,15 @@
                       <option value="repeat">复购</option>
                     </select>
                   </label>
+                  <label>凭证状态
+                    <select id="orderProofFilter">
+                      <option value="all">全部凭证</option>
+                      <option value="uploaded">已上传</option>
+                      <option value="inline">本地小图</option>
+                      <option value="failed">上传失败</option>
+                      <option value="none">未上传</option>
+                    </select>
+                  </label>
                   <button id="clearOrderFiltersBtn" class="button ghost" type="button">清除筛选</button>
                 </div>
                 <div class="table-wrap">
@@ -438,7 +447,7 @@
     </main>
 
     <div id="toast" class="toast" role="status" aria-live="polite"></div>
-    <script type="module" src="./app.js?v=20260617-42"></script>
+    <script type="module" src="./app.js?v=20260617-43"></script>
   </body>
 </html>
 

@@ -25,7 +25,7 @@ import {
 } from "https://www.gstatic.com/firebasejs/10.12.5/firebase-storage.js";
 
 const STORAGE_KEY = "amsystemFirebaseFallback";
-const APP_VERSION = "20260617-42";
+const APP_VERSION = "20260617-43";
 const SYSTEM_DOC_PATH = ["amsystem", "main"];
 const USER_COLLECTION = "amsystemUsers";
 const ORDER_COLLECTION = "amsystemOrders";
@@ -2291,6 +2291,7 @@ function filteredOrders() {
   const keyword = getInputValue("#orderSearchInput").toLowerCase();
   const statusFilter = getSelectValue("#orderStatusFilter", "all");
   const typeFilter = getSelectValue("#orderTypeFilter", "all");
+  const proofFilter = getSelectValue("#orderProofFilter", "all");
 
   return state.orders.filter((order) => {
     const user = findUser(order.userId);
@@ -2310,7 +2311,12 @@ function filteredOrders() {
     const matchesKeyword = !keyword || searchable.includes(keyword);
     const matchesStatus = statusFilter === "all" || order.status === statusFilter;
     const matchesType = typeFilter === "all" || order.type === typeFilter;
-    return matchesKeyword && matchesStatus && matchesType;
+    const matchesProof = proofFilter === "all"
+      || order.proofStatus === proofFilter
+      || (proofFilter === "uploaded" && Boolean(order.proofUrl))
+      || (proofFilter === "inline" && Boolean(order.proofInlineData))
+      || (proofFilter === "none" && !order.proofUrl && !order.proofInlineData && order.proofStatus !== "failed");
+    return matchesKeyword && matchesStatus && matchesType && matchesProof;
   });
 }
 
@@ -2507,12 +2513,14 @@ function applyTodoFocus(focus) {
   if (focus === "pendingOrders") {
     setValue("#orderStatusFilter", "pending");
     setValue("#orderTypeFilter", "all");
+    setValue("#orderProofFilter", "all");
     setValue("#orderSearchInput", "");
   }
   if (focus === "failedProofs") {
     setValue("#orderStatusFilter", "pending");
     setValue("#orderTypeFilter", "all");
-    setValue("#orderSearchInput", "上传失败");
+    setValue("#orderProofFilter", "failed");
+    setValue("#orderSearchInput", "");
   }
   if (focus === "pendingRewards") {
     setValue("#rewardStatusFilter", "pending");
@@ -2547,7 +2555,7 @@ document.addEventListener("click", (event) => {
   renderAll();
 });
 
-["#orderStatusFilter", "#orderTypeFilter", "#rewardStatusFilter", "#rewardTypeFilter", "#withdrawStatusFilter", "#userPackageFilter", "#userAccountFilter", "#logActionFilter", "#logLimitFilter"].forEach((selector) => {
+["#orderStatusFilter", "#orderTypeFilter", "#orderProofFilter", "#rewardStatusFilter", "#rewardTypeFilter", "#withdrawStatusFilter", "#userPackageFilter", "#userAccountFilter", "#logActionFilter", "#logLimitFilter"].forEach((selector) => {
   document.querySelector(selector)?.addEventListener("change", renderAll);
 });
 
@@ -2591,9 +2599,11 @@ document.querySelector("#clearOrderFiltersBtn")?.addEventListener("click", () =>
   const searchInput = document.querySelector("#orderSearchInput");
   const statusFilter = document.querySelector("#orderStatusFilter");
   const typeFilter = document.querySelector("#orderTypeFilter");
+  const proofFilter = document.querySelector("#orderProofFilter");
   if (searchInput) searchInput.value = "";
   if (statusFilter) statusFilter.value = "all";
   if (typeFilter) typeFilter.value = "all";
+  if (proofFilter) proofFilter.value = "all";
   renderAll();
 });
 
