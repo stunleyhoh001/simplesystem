@@ -25,7 +25,8 @@ import {
 } from "https://www.gstatic.com/firebasejs/10.12.5/firebase-storage.js";
 
 const STORAGE_KEY = "amsystemFirebaseFallback";
-const APP_VERSION = "20260617-43";
+const APP_VERSION = "20260617-44";
+const WITHDRAW_COOLDOWN_HOURS = 24;
 const SYSTEM_DOC_PATH = ["amsystem", "main"];
 const USER_COLLECTION = "amsystemUsers";
 const ORDER_COLLECTION = "amsystemOrders";
@@ -788,6 +789,8 @@ function withdrawEligibility(user) {
   if (user.frozen) reasons.push("账户已冻结");
   if (!isActivePackage(user)) reasons.push("需要有效配套");
   if (available < MIN_WITHDRAW_AMOUNT) reasons.push(`可提现余额需满 ${money(MIN_WITHDRAW_AMOUNT)}`);
+  const cooldown = withdrawCooldownRemaining(user.id);
+  if (cooldown > 0) reasons.push(`提现冷却中，还需 ${durationText(cooldown)}`);
   return {
     available,
     eligible: reasons.length === 0,
@@ -796,7 +799,44 @@ function withdrawEligibility(user) {
 }
 
 function withdrawRuleText(available) {
-  return `规则：充值积分不可提现；只有已确认/已释放的首充推荐奖励和复购奖励可提现。当前可提现奖励 ${money(available)}。`;
+  return `规则：充值积分不可提现；只有已确认/已释放的首充推荐奖励和复购奖励可提现。提现申请冷却 ${WITHDRAW_COOLDOWN_HOURS} 小时。当前可提现奖励 ${money(available)}。`;
+}
+
+function durationText(ms) {
+  const totalMinutes = Math.ceil(ms / 60000);
+  const hours = Math.floor(totalMinutes / 60);
+  const minutes = totalMinutes % 60;
+  return `${hours ? `${hours} 小时` : ""}${minutes ? ` ${minutes} 分钟` : ""}`.trim() || "少于 1 分钟";
+}
+
+function withdrawCooldownRemaining(userId) {
+  const latest = (state.withdraws || [])
+    .filter((withdraw) => withdraw.userId === userId && withdraw.status !== "rejected")
+    .map((withdraw) => new Date(withdraw.createdAt).getTime())
+    .filter(Boolean)
+    .sort((a, b) => b - a)[0];
+  if (!latest) return 0;
+  return Math.max(latest + WITHDRAW_COOLDOWN_HOURS * 60 * 60 * 1000 - Date.now(), 0);
+}
+
+function duplicatePaymentRef(ref, userId = "") {
+  const normalized = String(ref || "").trim().toLowerCase();
+  if (!normalized) return null;
+  return (state.orders || []).find((order) =>
+    order.status !== "cancelled"
+    && String(order.paymentRef || "").trim().toLowerCase() === normalized
+    && (!userId || order.userId === userId)
+  );
+}
+
+function duplicateProofName(fileName, userId = "") {
+  const normalized = String(fileName || "").trim().toLowerCase();
+  if (!normalized) return null;
+  return (state.orders || []).find((order) =>
+    order.status !== "cancelled"
+    && String(order.proofName || "").trim().toLowerCase() === normalized
+    && (!userId || order.userId === userId)
+  );
 }
 
 function dataIntegrityIssues(data = state) {
@@ -2114,6 +2154,7 @@ function renderAdminRiskRules() {
       title: "提现触发条件",
       rows: [
         `最低提现金额：${money(MIN_WITHDRAW_AMOUNT)}。`,
+        `两次提现申请间隔：${WITHDRAW_COOLDOWN_HOURS} 小时。`,
         "用户必须账户正常，且拥有有效配套。",
         "申请金额不能超过当前可提现余额。",
       ],
@@ -2895,6 +2936,8 @@ document.querySelector("#withdrawForm").addEventListener("submit", async (event)
   if (amount > eligibility.available) return toast("可提现奖励不足");
   if (!method || !account) return toast("请先填写收款方式和收款账号");
   if (amount > confirmedAvailable(user.id)) return toast("可提现奖励不足");
+  const cooldown = withdrawCooldownRemaining(user.id);
+  if (cooldown > 0) return toast(`提现冷却中，请 ${durationText(cooldown)} 后再申请`);
   state.withdraws.push({ id: id("wd"), userId: user.id, amount, method, account, source: "reward", status: "pending", createdAt: new Date().toISOString() });
   event.currentTarget.reset();
   await saveState();
@@ -3020,6 +3063,8 @@ document.body.addEventListener("click", async (event) => {
     };
     if (!paymentInfo.ref) return toast("请先填写付款参考号");
     const user = currentUser();
+    const duplicateRefOrder = duplicatePaymentRef(paymentInfo.ref, user.id);
+    if (duplicateRefOrder && !window.confirm(`付款参考号已在订单 ${duplicateRefOrder.id} 使用过。\n\n如果这是同一笔付款，请不要重复申请；如果确认是新付款，点“确定”继续。`)) return;
     const orderType = actualOrderType(state, user.id);
     if (orderType === "repeat" && repeatCooldownRemaining(user) > 0) {
       return toast(`复购冷却中，请 ${repeatCooldownText(user)} 后再申请`);
@@ -3031,6 +3076,12 @@ document.body.addEventListener("click", async (event) => {
     const order = createOrder(state, user.id, buyPlan.dataset.buyPlan, orderType, "pending", new Date().toISOString(), paymentInfo);
     const proofFile = document.querySelector("#paymentInfoForm [name='paymentProof']").files[0];
     if (proofFile) {
+      const duplicateProofOrder = duplicateProofName(proofFile.name, user.id);
+      if (duplicateProofOrder && !window.confirm(`付款凭证文件名已在订单 ${duplicateProofOrder.id} 使用过。\n\n请确认不是重复上传同一张凭证。确定继续提交吗？`)) {
+        state.orders = state.orders.filter((item) => item.id !== order.id);
+        renderAll();
+        return;
+      }
       try {
         toast("正在上传付款证明...");
         Object.assign(order, await uploadPaymentProofForOrder(proofFile, order.id));
