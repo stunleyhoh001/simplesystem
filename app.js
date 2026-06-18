@@ -25,7 +25,7 @@ import {
 } from "https://www.gstatic.com/firebasejs/10.12.5/firebase-storage.js";
 
 const STORAGE_KEY = "amsystemFirebaseFallback";
-const APP_VERSION = "20260618-17";
+const APP_VERSION = "20260618-26";
 const WITHDRAW_COOLDOWN_HOURS = 24;
 const SYSTEM_DOC_PATH = ["amsystem", "main"];
 const USER_COLLECTION = "amsystemUsers";
@@ -869,6 +869,10 @@ function orderRiskLabels(order, data = state) {
   const labels = [];
   const paymentRef = String(order.paymentRef || "").trim().toLowerCase();
   const proofName = String(order.proofName || "").trim().toLowerCase();
+  const plan = (data.plans || []).find((item) => item.id === order.planId);
+  if (plan && Number(order.amount || 0) !== Number(plan.amount || 0)) {
+    labels.push(`订单金额 ${money(order.amount)} 与当前配套金额 ${money(plan.amount)} 不一致`);
+  }
   if (paymentRef) {
     const duplicateRef = (data.orders || []).find((item) =>
       item.id !== order.id
@@ -931,7 +935,8 @@ function incompleteProfileUsers(data = state) {
   return (data.users || []).filter((user) => !profileComplete(user));
 }
 
-function dataIntegrityIssues(data = state) {
+function dataIntegrityIssues(data = state, options = {}) {
+  const includeProfileIssues = options.includeProfileIssues !== false;
   const issues = [];
   const users = data.users || [];
   const orders = data.orders || [];
@@ -957,6 +962,9 @@ function dataIntegrityIssues(data = state) {
     if (!usersById.has(order.userId)) issues.push(`订单 ${order.id} 的用户不存在`);
     if (!(data.plans || []).some((plan) => plan.id === order.planId) && order.status !== "cancelled") issues.push(`订单 ${order.id} 的配套不存在或已删除`);
     if (order.status === "paid" && Number(order.points || 0) <= 0) issues.push(`已付款订单 ${order.id} 积分为 0`);
+    orderRiskLabels(order, data).forEach((risk) => {
+      if (risk.includes("金额")) issues.push(`订单 ${order.id}：${risk}`);
+    });
   });
 
   rewards.forEach((reward) => {
@@ -975,6 +983,8 @@ function dataIntegrityIssues(data = state) {
   });
 
   users.forEach((user) => {
+    const missingFields = profileMissingFields(user);
+    if (includeProfileIssues && missingFields.length) issues.push(`用户 ${user.name || user.id} 资料不完整：${missingFields.join("、")}`);
     const breakdown = withdrawBreakdown(user.id);
     const earned = Number(breakdown.first || 0) + Number(breakdown.repeatReleased || 0);
     if (breakdown.requested > earned) issues.push(`用户 ${user.name || user.id} 提现金额超过已释放奖励`);
@@ -1239,6 +1249,7 @@ function orderDetailText(order) {
   const plan = findPlan(order.planId);
   if (!order || !user || !plan) return "订单资料不完整";
   const resolvedType = order.status === "pending" ? actualOrderType(state, order.userId, order.id) : order.type;
+  const risks = orderRiskLabels(order);
   const rewards = (state.rewards || []).filter((reward) => reward.orderId === order.id);
   const rewardLines = rewards.length
     ? rewards.map((reward) => {
@@ -1878,6 +1889,7 @@ function renderMemberWithdraws(user) {
 function renderAdmin() {
   document.querySelector("#metricUsers").textContent = state.users.length;
   document.querySelector("#metricSales").textContent = money(state.orders.filter((order) => order.status === "paid").reduce((sum, order) => sum + order.amount, 0));
+  document.querySelector("#metricPendingOrders").textContent = state.orders.filter((order) => order.status === "pending").length;
   document.querySelector("#metricPendingRewards").textContent = money(state.rewards.filter((reward) => ["pending", "releasing"].includes(reward.status)).reduce((sum, reward) => sum + (Number(reward.amount || 0) - Number(reward.releasedAmount || 0)), 0));
   document.querySelector("#metricWithdraws").textContent = money(state.withdraws.filter((item) => item.status === "pending").reduce((sum, item) => sum + item.amount, 0));
   ensurePlanCooldownField();
@@ -1907,7 +1919,7 @@ function adminTodoItems() {
   const duplicateRisks = duplicateOrderRisks(state);
   const payoutRisks = payoutRiskUsers(state);
   const incompleteProfiles = incompleteProfileUsers(state);
-  const integrityIssues = dataIntegrityIssues(state);
+  const integrityIssues = dataIntegrityIssues(state, { includeProfileIssues: false });
   const checks = readinessChecks();
   const failedChecks = checks.filter((check) => !check.ok);
 
@@ -2303,21 +2315,27 @@ function renderAdminWithdraws() {
 }
 
 function readinessChecks() {
-  const activePlans = (state.plans || []).filter((plan) => plan.active);
+  const usablePlans = (state.plans || []).filter((plan) =>
+    Number(plan.amount || 0) > 0
+    && Number(plan.points || 0) > 0
+    && Number(plan.validDays || 0) > 0
+    && Number(plan.firstRate || 0) >= 0
+    && Number(plan.repeatRate || 0) >= 0
+  );
   const users = state.users || [];
   const paidOrders = (state.orders || []).filter((order) => order.status === "paid");
   const adminUsers = users.filter((user) => ADMIN_EMAILS.includes(user.email));
-  const missingPaymentUsers = users.filter((user) => !user.payoutMethod || !user.payoutAccount);
+  const incompleteProfiles = incompleteProfileUsers(state);
   const pendingOrders = (state.orders || []).filter((order) => order.status === "pending");
   const pendingWithdraws = (state.withdraws || []).filter((withdraw) => withdraw.status === "pending");
   const pendingRewards = (state.rewards || []).filter((reward) => reward.status === "pending" || reward.status === "releasing");
-  const integrityIssues = dataIntegrityIssues(state);
+  const integrityIssues = dataIntegrityIssues(state, { includeProfileIssues: false });
 
   return [
     {
-      ok: activePlans.length > 0,
-      label: "至少 1 个启用配套",
-      detail: activePlans.length ? `当前启用 ${activePlans.length} 个配套` : "请先在左侧新增或启用配套",
+      ok: usablePlans.length > 0,
+      label: "至少 1 个可用配套",
+      detail: usablePlans.length ? `当前可用 ${usablePlans.length} 个配套` : "请先在左侧新增完整配套规则",
     },
     {
       ok: adminUsers.length > 0 || isAdmin(),
@@ -2325,9 +2343,9 @@ function readinessChecks() {
       detail: adminUsers.length ? `已识别 ${adminUsers.length} 个管理员用户` : `当前管理员邮箱：${ADMIN_EMAILS.join(" / ")}`,
     },
     {
-      ok: users.length === 0 || missingPaymentUsers.length === 0,
-      label: "用户收款资料",
-      detail: missingPaymentUsers.length ? `${missingPaymentUsers.length} 个用户还未填写完整收款资料` : "用户收款资料没有明显缺口",
+      ok: users.length === 0 || incompleteProfiles.length === 0,
+      label: "用户联系与收款资料",
+      detail: incompleteProfiles.length ? `${incompleteProfiles.length} 个用户还未填写完整手机或默认收款资料` : "用户联系与收款资料完整",
     },
     {
       ok: pendingOrders.length === 0,
@@ -2362,7 +2380,7 @@ function readinessChecks() {
 }
 
 function renderAdminRiskRules() {
-  const target = document.querySelector("#riskRuleCards");
+  const target = document.querySelector("#adminRiskList");
   if (!target) return;
   const planCooldowns = state.plans.map((plan) => `${plan.name}: ${planRepeatCooldownHours(plan)} 小时`).join(" / ");
   const checks = readinessChecks();
@@ -2567,6 +2585,21 @@ function exportRiskReport() {
   );
 }
 
+function exportTodoReport() {
+  downloadCsv(
+    `amsystem-todos-${exportStamp()}.csv`,
+    ["项目", "数量", "等级", "详情", "处理模块", "处理动作"],
+    adminTodoItems().map((item) => [
+      item.title,
+      item.count,
+      item.level,
+      item.detail,
+      item.tab,
+      item.action,
+    ])
+  );
+}
+
 function csvEscape(value) {
   const text = String(value ?? "");
   return `"${text.replace(/"/g, '""')}"`;
@@ -2743,6 +2776,7 @@ function updateAuthStatusClean() {
 function renderAdminLocked() {
   document.querySelector("#metricUsers").textContent = "-";
   document.querySelector("#metricSales").textContent = "-";
+  document.querySelector("#metricPendingOrders").textContent = "-";
   document.querySelector("#metricPendingRewards").textContent = "-";
   document.querySelector("#metricWithdraws").textContent = "-";
   document.querySelector("#adminPlanList").innerHTML = `<article class="plan-card"><strong>后台已锁定</strong><span>请使用管理员 Google 邮箱登录。</span></article>`;
@@ -2751,8 +2785,8 @@ function renderAdminLocked() {
   document.querySelector("#adminOrderTable").innerHTML = `<tr><td colspan="10">无管理员权限</td></tr>`;
   document.querySelector("#adminRewardTable").innerHTML = `<tr><td colspan="8">无管理员权限</td></tr>`;
   document.querySelector("#adminWithdrawTable").innerHTML = `<tr><td colspan="8">无管理员权限</td></tr>`;
-  if (document.querySelector("#riskRuleCards")) {
-    document.querySelector("#riskRuleCards").innerHTML = `<article class="risk-card"><strong>后台已锁定</strong><span>请使用管理员 Google 邮箱登录后查看风控规则。</span></article>`;
+  if (document.querySelector("#adminRiskList")) {
+    document.querySelector("#adminRiskList").innerHTML = `<article class="risk-card"><strong>后台已锁定</strong><span>请使用管理员 Google 邮箱登录后查看风控规则。</span></article>`;
   }
   if (document.querySelector("#adminLogTable")) {
     document.querySelector("#adminLogTable").innerHTML = `<tr><td colspan="5">无管理员权限</td></tr>`;
@@ -2825,6 +2859,12 @@ function applyTodoFocus(focus) {
     setValue("#orderProofFilter", "all");
     setValue("#orderSearchInput", "");
   }
+  if (focus === "paidOrders") {
+    setValue("#orderStatusFilter", "paid");
+    setValue("#orderTypeFilter", "all");
+    setValue("#orderProofFilter", "all");
+    setValue("#orderSearchInput", "");
+  }
   if (focus === "failedProofs") {
     setValue("#orderStatusFilter", "pending");
     setValue("#orderTypeFilter", "all");
@@ -2860,6 +2900,39 @@ function applyTodoFocus(focus) {
     setValue("#userProfileFilter", "incomplete");
     setValue("#userSearchInput", "");
   }
+  if (focus === "allUsers") {
+    setValue("#userPackageFilter", "all");
+    setValue("#userAccountFilter", "all");
+    setValue("#userPayoutRiskFilter", "all");
+    setValue("#userProfileFilter", "all");
+    setValue("#userSearchInput", "");
+  }
+}
+
+function scrollToAdminFocus(tabId, focus) {
+  const panel = document.querySelector(`#${tabId}`);
+  if (!panel) return;
+  const targets = {
+    pendingOrders: "#adminOrderTable",
+    paidOrders: "#adminOrderTable",
+    failedProofs: "#adminOrderTable",
+    pendingRewards: "#adminRewardTable",
+    dueRewards: "#adminRewardTable",
+    pendingWithdraws: "#adminWithdrawTable",
+    payoutRiskUsers: "#adminUserTable",
+    incompleteProfiles: "#adminUserTable",
+    allUsers: "#adminUserTable",
+    duplicateOrders: "#adminRiskList",
+    integrityIssues: "#adminRiskList",
+    readiness: "#adminRiskList",
+  };
+  const target = document.querySelector(targets[focus]) || panel;
+  const scrollTarget = target.closest(".table-wrap") || target.closest(".panel") || target;
+  scrollTarget.scrollIntoView({ behavior: "smooth", block: "start" });
+  scrollTarget.classList.remove("attention-pulse");
+  window.setTimeout(() => scrollTarget.classList.add("attention-pulse"), 0);
+  window.setTimeout(() => scrollTarget.classList.remove("attention-pulse"), 1400);
+  panel.querySelector(".filter-bar input, .filter-bar select")?.focus({ preventScroll: true });
 }
 
 document.querySelectorAll(".tabs").forEach((tabs) => {
@@ -2873,9 +2946,13 @@ document.querySelectorAll(".tabs").forEach((tabs) => {
 document.addEventListener("click", (event) => {
   const openAdminTab = event.target.closest("[data-open-admin-tab]");
   if (!openAdminTab) return;
-  applyTodoFocus(openAdminTab.dataset.todoFocus);
+  event.preventDefault();
   openTab(openAdminTab.dataset.openAdminTab);
+  applyTodoFocus(openAdminTab.dataset.todoFocus);
   renderAll();
+  window.setTimeout(() => {
+    scrollToAdminFocus(openAdminTab.dataset.openAdminTab, openAdminTab.dataset.todoFocus);
+  }, 0);
 });
 
 document.addEventListener("click", (event) => {
@@ -3271,6 +3348,19 @@ document.querySelector("#withdrawForm").addEventListener("submit", async (event)
 
 document.querySelector("#confirmDueBtn").addEventListener("click", async () => {
   if (!requireAdmin()) return;
+  const dueRewards = state.rewards.filter((reward) =>
+    ["pending", "releasing"].includes(reward.status) && new Date(reward.confirmAfter) <= new Date()
+  );
+  const dueAmount = dueRewards.reduce((sum, reward) => {
+    if (Array.isArray(reward.releasePlan)) {
+      return sum + reward.releasePlan
+        .filter((part) => !part.released && new Date(part.releaseAt) <= new Date())
+        .reduce((partSum, part) => partSum + Number(part.amount || 0), 0);
+    }
+    return sum + Number(reward.amount || 0);
+  }, 0);
+  if (!dueRewards.length) return toast("暂无到期可确认奖励");
+  if (!window.confirm(`确定批量处理到期奖励？\n\n数量：${dueRewards.length} 笔\n预计释放/确认：${money(dueAmount)}`)) return;
   let count = 0;
   const now = new Date();
   state.rewards.forEach((reward) => {
@@ -3514,9 +3604,11 @@ document.body.addEventListener("click", async (event) => {
     if (!requireAdmin()) return;
     const rewardId = rewardAction.dataset.confirmReward || rewardAction.dataset.cancelReward || rewardAction.dataset.freezeReward;
     const reward = state.rewards.find((item) => item.id === rewardId);
+    if (!reward) return toast("找不到奖励记录");
     const actionLabel = rewardAction.dataset.confirmReward ? "确认" : rewardAction.dataset.cancelReward ? "取消" : "冻结";
     const note = window.prompt(`请输入奖励${actionLabel}备注（可留空）`, reward.reviewNote || "");
     if (note === null) return;
+    if (!window.confirm(`确定${actionLabel}这笔奖励？\n\n订单：${reward.orderId}\n金额：${money(reward.amount)}\n备注：${note.trim() || "无"}`)) return;
     if (rewardAction.dataset.confirmReward) {
       if (Array.isArray(reward.releasePlan)) {
         releaseDueRewardParts(reward);
@@ -3540,12 +3632,14 @@ document.body.addEventListener("click", async (event) => {
     if (!requireAdmin()) return;
     const withdrawId = withdrawAction.dataset.approveWithdraw || withdrawAction.dataset.rejectWithdraw || withdrawAction.dataset.payWithdraw;
     const withdraw = state.withdraws.find((item) => item.id === withdrawId);
+    if (!withdraw) return toast("找不到提现申请");
     const actionLabel = withdrawAction.dataset.approveWithdraw ? "通过" : withdrawAction.dataset.rejectWithdraw ? "拒绝" : "标记打款";
     const risks = withdrawRiskLabels(withdraw);
     const riskNote = risks.length && !withdrawAction.dataset.rejectWithdraw ? "已核对提现风控风险：" : "";
     const note = window.prompt(`请输入提现${actionLabel}备注（可留空）`, withdraw.reviewNote || riskNote);
     if (note === null) return;
     if (risks.length && !withdrawAction.dataset.rejectWithdraw && note.trim().length <= riskNote.length) return toast("有风控风险的提现必须填写审核备注");
+    if (!window.confirm(`确定${actionLabel}这笔提现吗？\n\n编号：${withdraw.id}\n金额：${money(withdraw.amount)}\n收款：${withdraw.method} / ${withdraw.account}\n备注：${note.trim() || "无"}`)) return;
     if (withdrawAction.dataset.approveWithdraw) {
       withdraw.status = "approved";
       withdraw.reviewedAt = new Date().toISOString();
@@ -3579,6 +3673,15 @@ document.querySelector("#exportRiskReportBtn")?.addEventListener("click", async 
   await saveState();
   renderAll();
   toast("异常报告已导出");
+});
+
+document.querySelector("#exportTodosBtn")?.addEventListener("click", async () => {
+  if (!requireAdmin()) return;
+  exportTodoReport();
+  addAdminLog("导出待办清单", "待办中心", "导出当前后台待办事项");
+  await saveState();
+  renderAll();
+  toast("待办清单已导出");
 });
 
 document.querySelector("#resetBtn").addEventListener("click", async () => {
