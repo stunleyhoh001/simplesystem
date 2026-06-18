@@ -164,7 +164,7 @@
                 <p>只有已确认奖励可以申请提现，提现需要后台审核。</p>
               </div>
             </div>
-            <p id="withdrawEligibilityText" class="help-text">提现条件：有效配套、账户正常、可提现余额满 RM50。</p>
+            <p id="withdrawEligibilityText" class="help-text">提现条件：有效配套、账户正常、资料完整、可提现余额满 RM50，且两次申请需间隔 24 小时。</p>
             <form id="withdrawForm" class="grid-form compact">
               <label>提现金额 RM<input name="amount" type="number" min="1" step="1" required /></label>
               <label>收款方式<input name="method" placeholder="银行 / Touch n Go / USDT" required /></label>
@@ -176,7 +176,7 @@
             <div class="panel-head"><h2>提现记录</h2></div>
             <div class="table-wrap">
               <table>
-                <thead><tr><th>编号</th><th>金额</th><th>来源</th><th>方式</th><th>账号</th><th>状态</th><th>时间</th></tr></thead>
+                <thead><tr><th>编号</th><th>金额</th><th>来源</th><th>方式</th><th>账号</th><th>状态</th><th>申请时间</th><th>打款时间</th></tr></thead>
                 <tbody id="memberWithdrawTable"></tbody>
               </table>
             </div>
@@ -258,6 +258,13 @@
                       <option value="all">全部收款</option>
                       <option value="shared">共享账号</option>
                       <option value="clean">无共享</option>
+                    </select>
+                  </label>
+                  <label>资料状态
+                    <select id="userProfileFilter">
+                      <option value="all">全部资料</option>
+                      <option value="complete">资料完整</option>
+                      <option value="incomplete">资料不完整</option>
                     </select>
                   </label>
                   <button id="clearUserFiltersBtn" class="button ghost" type="button">清除筛选</button>
@@ -454,7 +461,7 @@
     </main>
 
     <div id="toast" class="toast" role="status" aria-live="polite"></div>
-    <script type="module" src="./app.js?v=20260617-55"></script>
+    <script type="module" src="./app.js?v=20260618-17"></script>
   </body>
 </html>
 

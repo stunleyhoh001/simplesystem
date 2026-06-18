@@ -25,7 +25,7 @@ import {
 } from "https://www.gstatic.com/firebasejs/10.12.5/firebase-storage.js";
 
 const STORAGE_KEY = "amsystemFirebaseFallback";
-const APP_VERSION = "20260617-55";
+const APP_VERSION = "20260618-17";
 const WITHDRAW_COOLDOWN_HOURS = 24;
 const SYSTEM_DOC_PATH = ["amsystem", "main"];
 const USER_COLLECTION = "amsystemUsers";
@@ -786,8 +786,10 @@ function withdrawBreakdown(userId) {
 function withdrawEligibility(user) {
   const available = withdrawBreakdown(user.id).available;
   const reasons = [];
+  const missingFields = profileMissingFields(user);
   if (user.frozen) reasons.push("账户已冻结");
   if (!isActivePackage(user)) reasons.push("需要有效配套");
+  if (missingFields.length) reasons.push(`请补完整资料：${missingFields.join("、")}`);
   if (available < MIN_WITHDRAW_AMOUNT) reasons.push(`可提现余额需满 ${money(MIN_WITHDRAW_AMOUNT)}`);
   const cooldown = withdrawCooldownRemaining(user.id);
   if (cooldown > 0) reasons.push(`提现冷却中，还需 ${durationText(cooldown)}`);
@@ -919,6 +921,14 @@ function sharedWithdrawAccountUsers(account, currentUserId = "", data = state) {
     .filter((userId) => userId && userId !== currentUserId)
     .map((userId) => data.users.find((user) => user.id === userId))
     .filter(Boolean);
+}
+
+function payoutRiskUsers(data = state) {
+  return (data.users || []).filter((user) => sharedWithdrawAccountUsers(user.withdrawAccount, user.id, data).length > 0);
+}
+
+function incompleteProfileUsers(data = state) {
+  return (data.users || []).filter((user) => !profileComplete(user));
 }
 
 function dataIntegrityIssues(data = state) {
@@ -1300,6 +1310,7 @@ function userDetailText(user) {
   const referrals = directReferralCount(user.id);
   const breakdown = withdrawBreakdown(user.id);
   const sharedAccountUsers = sharedWithdrawAccountUsers(user.withdrawAccount, user.id);
+  const missingFields = profileMissingFields(user);
   return [
     `用户：${user.name}`,
     `账号：${user.account}`,
@@ -1308,6 +1319,8 @@ function userDetailText(user) {
     `推荐人：${referrer ? `${referrer.name} / ${referrer.inviteCode}` : "无"}`,
     `配套状态：${statusLabel}`,
     `账号状态：${user.frozen ? "已冻结" : "正常"}`,
+    `资料状态：${missingFields.length ? "资料不完整" : "资料完整"}`,
+    `缺失资料：${missingFields.length ? missingFields.join("、") : "无"}`,
     `默认收款：${[user.withdrawMethod, user.withdrawAccount].filter(Boolean).join(" / ") || "-"}`,
     `共享收款账号：${sharedAccountUsers.length ? sharedAccountUsers.map((item) => `${item.name} / ${item.account}`).join("；") : "无"}`,
     "",
@@ -1541,6 +1554,7 @@ function renderMember() {
   const used = directReferralCount(user.id);
   const inviteLink = `${location.origin}${location.pathname}?ref=${user.inviteCode}`;
   document.querySelector("#memberName").textContent = `${user.name}（${user.inviteCode}）`;
+  renderMemberProfileStatus(user);
   document.querySelector("#memberPoints").textContent = points(user.points);
   document.querySelector("#memberConfirmed").textContent = money(confirmedAvailable(user.id));
   document.querySelector("#memberPoints").closest("span").title = "充值积分不可提现";
@@ -1549,6 +1563,8 @@ function renderMember() {
   document.querySelector("#memberRepeatCredits").textContent = points(user.repeatCredits || 0);
   document.querySelector("#memberPlanStatus").textContent = statusLabel;
   document.querySelector("#memberPlanStatus").className = `tag ${statusClass}`;
+  renderMemberAlerts(user);
+  renderMemberTabBadges(user);
   document.querySelector("#inviteLink").textContent = inviteLink;
   renderInviteCodeBox(user);
   const refInput = document.querySelector("#registerForm [name='inviteCode']");
@@ -1575,6 +1591,97 @@ function renderMember() {
   renderMemberRewards(user);
   renderMemberRepeatCreditLogs(user);
   renderMemberWithdraws(user);
+}
+
+function profileComplete(user) {
+  return Boolean(user.phone && user.withdrawMethod && user.withdrawAccount);
+}
+
+function profileMissingFields(user) {
+  return [
+    user.phone ? "" : "手机号码",
+    user.withdrawMethod ? "" : "默认收款方式",
+    user.withdrawAccount ? "" : "默认收款账号",
+  ].filter(Boolean);
+}
+
+function renderMemberProfileStatus(user) {
+  let status = document.querySelector("#memberProfileStatus");
+  const name = document.querySelector("#memberName");
+  if (!status && name) {
+    status = document.createElement("span");
+    status.id = "memberProfileStatus";
+    name.insertAdjacentElement("afterend", status);
+  }
+  if (!status) return;
+  const complete = profileComplete(user);
+  status.className = `profile-status ${complete ? "complete" : "incomplete"}`;
+  status.textContent = complete ? "资料完整" : "资料待完善";
+  if (complete) {
+    status.removeAttribute("data-member-action");
+    status.removeAttribute("role");
+  } else {
+    status.dataset.memberAction = "profile";
+    status.setAttribute("role", "button");
+  }
+}
+
+function memberAlertStats(user) {
+  const orders = state.orders || [];
+  const rewards = state.rewards || [];
+  const withdraws = state.withdraws || [];
+  return {
+    pendingOrders: orders.filter((order) => order.userId === user.id && order.status === "pending").length,
+    failedProofs: orders.filter((order) => order.userId === user.id && order.status === "pending" && order.proofStatus === "failed").length,
+    pendingRewards: rewards.filter((reward) => reward.userId === user.id && ["pending", "releasing"].includes(reward.status)).length,
+    pendingWithdraws: withdraws.filter((withdraw) => withdraw.userId === user.id && ["pending", "approved"].includes(withdraw.status)).length,
+    missingProfile: !profileComplete(user),
+  };
+}
+
+function memberAlertItems(user) {
+  const stats = memberAlertStats(user);
+  return [
+    stats.pendingOrders ? { text: `${stats.pendingOrders} 笔充值订单等待后台确认`, tab: "memberPlans" } : null,
+    stats.failedProofs ? { text: `${stats.failedProofs} 个付款凭证需要补传`, tab: "memberPlans" } : null,
+    stats.pendingRewards ? { text: `${stats.pendingRewards} 笔奖励等待确认或释放`, tab: "memberRewards" } : null,
+    stats.pendingWithdraws ? { text: `${stats.pendingWithdraws} 笔提现正在处理中`, tab: "memberWithdraw" } : null,
+    stats.missingProfile ? { text: "联系或默认收款资料还不完整", action: "profile" } : null,
+  ].filter(Boolean);
+}
+
+function renderMemberAlerts(user) {
+  let box = document.querySelector("#memberAlertBox");
+  const accountCard = document.querySelector(".account-card");
+  if (!box && accountCard) {
+    box = document.createElement("div");
+    box.id = "memberAlertBox";
+    box.className = "member-alert-box";
+    accountCard.appendChild(box);
+  }
+  if (!box) return;
+  const items = memberAlertItems(user);
+  box.innerHTML = items.length
+    ? `<strong>待处理提醒</strong>${items.map((item) => `<button class="member-alert-item" type="button" ${item.tab ? `data-open-member-tab="${item.tab}"` : `data-member-action="${item.action}"`}>${item.text}</button>`).join("")}`
+    : `<strong>待处理提醒</strong><span>目前没有需要处理的事项。</span>`;
+  box.classList.toggle("empty", items.length === 0);
+}
+
+function memberAlertCounts(user) {
+  const stats = memberAlertStats(user);
+  return {
+    plans: stats.pendingOrders + stats.failedProofs,
+    rewards: stats.pendingRewards,
+    withdraws: stats.pendingWithdraws,
+  };
+}
+
+function renderMemberTabBadges(user) {
+  const counts = memberAlertCounts(user);
+  setTabBadge("memberPlans", counts.plans, counts.plans ? "warn" : "ok");
+  setTabBadge("memberRewards", counts.rewards, counts.rewards ? "warn" : "ok");
+  setTabBadge("memberWithdraw", counts.withdraws, counts.withdraws ? "warn" : "ok");
+  setTabBadge("memberReferral", 0);
 }
 
 function renderMemberProfile(user) {
@@ -1675,7 +1782,8 @@ function renderMemberPlans(user) {
 function renderMemberOrders(user) {
   const rows = state.orders.filter((order) => order.userId === user.id).slice().reverse().map((order) => {
     const plan = findPlan(order.planId);
-    return `<tr><td>${order.id}</td><td>${plan?.name || "-"}</td><td>${order.type === "first" ? "首充" : "复购"}</td><td>${money(order.amount)}</td><td>${points(order.points)}</td><td><span class="tag ${order.status}">${labelStatus(order.status)}</span></td><td>${new Date(order.createdAt).toLocaleString("zh-CN")}</td></tr>`;
+    const noteText = order.reviewNote ? `<span class="muted-line">处理备注：${order.reviewNote}</span>` : "";
+    return `<tr><td>${order.id}</td><td>${plan?.name || "-"}</td><td>${order.type === "first" ? "首充" : "复购"}</td><td>${money(order.amount)}</td><td>${points(order.points)}</td><td><span class="tag ${order.status}">${labelStatus(order.status)}</span>${noteText}</td><td>${new Date(order.createdAt).toLocaleString("zh-CN")}</td></tr>`;
   }).join("");
   document.querySelector("#memberOrderTable").innerHTML = rows || `<tr><td colspan="7">暂无订单</td></tr>`;
 }
@@ -1736,7 +1844,8 @@ function renderRewardRules() {
 function renderMemberRewards(user) {
   const rows = state.rewards.filter((reward) => reward.userId === user.id).slice().reverse().map((reward) => {
     const sourceUser = findUser(reward.sourceUserId);
-    return `<tr><td>${sourceUser?.name || "-"}</td><td>${reward.orderId}</td><td>${rewardTypeText(reward)}</td><td>${reward.rate}%</td><td>${rewardAmountText(reward)}</td><td><span class="tag ${reward.status}">${labelStatus(reward.status)}</span></td><td>${rewardNextDateText(reward)}</td></tr>`;
+    const noteText = reward.reviewNote ? `<span class="muted-line">审核备注：${reward.reviewNote}</span>` : "";
+    return `<tr><td>${sourceUser?.name || "-"}</td><td>${reward.orderId}</td><td>${rewardTypeText(reward)}</td><td>${reward.rate}%</td><td>${rewardAmountText(reward)}</td><td><span class="tag ${reward.status}">${labelStatus(reward.status)}</span>${noteText}</td><td>${rewardNextDateText(reward)}</td></tr>`;
   }).join("");
   document.querySelector("#memberRewardTable").innerHTML = rows || `<tr><td colspan="7">暂无奖励</td></tr>`;
 }
@@ -1758,8 +1867,12 @@ function renderMemberRepeatCreditLogs(user) {
 }
 
 function renderMemberWithdraws(user) {
-  const rows = state.withdraws.filter((item) => item.userId === user.id).slice().reverse().map((item) => `<tr><td>${item.id}</td><td>${money(item.amount)}</td><td>${item.source === "reward" ? "奖励提现" : item.source || "-"}</td><td>${item.method}</td><td>${item.account}</td><td><span class="tag ${item.status}">${labelStatus(item.status)}</span></td><td>${new Date(item.createdAt).toLocaleString("zh-CN")}</td></tr>`).join("");
-  document.querySelector("#memberWithdrawTable").innerHTML = rows || `<tr><td colspan="7">暂无提现记录</td></tr>`;
+  const rows = state.withdraws.filter((item) => item.userId === user.id).slice().reverse().map((item) => {
+    const paidText = item.paidAt ? new Date(item.paidAt).toLocaleString("zh-CN") : "-";
+    const noteText = item.reviewNote ? `<span class="muted-line">备注：${item.reviewNote}</span>` : "";
+    return `<tr><td>${item.id}</td><td>${money(item.amount)}</td><td>${item.source === "reward" ? "奖励提现" : item.source || "-"}</td><td>${item.method}</td><td>${item.account}</td><td><span class="tag ${item.status}">${labelStatus(item.status)}</span>${noteText}</td><td>${new Date(item.createdAt).toLocaleString("zh-CN")}</td><td>${paidText}</td></tr>`;
+  }).join("");
+  document.querySelector("#memberWithdrawTable").innerHTML = rows || `<tr><td colspan="8">暂无提现记录</td></tr>`;
 }
 
 function renderAdmin() {
@@ -1792,6 +1905,8 @@ function adminTodoItems() {
   const pendingRewards = (state.rewards || []).filter((reward) => ["pending", "releasing"].includes(reward.status));
   const pendingWithdraws = (state.withdraws || []).filter((withdraw) => withdraw.status === "pending");
   const duplicateRisks = duplicateOrderRisks(state);
+  const payoutRisks = payoutRiskUsers(state);
+  const incompleteProfiles = incompleteProfileUsers(state);
   const integrityIssues = dataIntegrityIssues(state);
   const checks = readinessChecks();
   const failedChecks = checks.filter((check) => !check.ok);
@@ -1841,6 +1956,24 @@ function adminTodoItems() {
       action: "到提现审核处理",
       tab: "adminWithdraws",
       focus: "pendingWithdraws",
+    },
+    {
+      title: "共享收款账号",
+      count: payoutRisks.length,
+      level: payoutRisks.length ? "danger" : "ok",
+      detail: payoutRisks.length ? `${payoutRisks.length} 个用户的默认收款账号与其他用户共享。` : "没有发现共享默认收款账号。",
+      action: "到用户管理查看",
+      tab: "adminUsers",
+      focus: "payoutRiskUsers",
+    },
+    {
+      title: "用户资料待完善",
+      count: incompleteProfiles.length,
+      level: incompleteProfiles.length ? "warn" : "ok",
+      detail: incompleteProfiles.length ? `${incompleteProfiles.length} 个用户缺少手机或默认收款资料。` : "用户联系与收款资料完整。",
+      action: "到用户管理查看",
+      tab: "adminUsers",
+      focus: "incompleteProfiles",
     },
     {
       title: "数据异常",
@@ -2020,7 +2153,9 @@ function renderAdminUsers() {
     const [statusClass, statusLabel] = packageStatus(user);
     const sharedUsers = sharedWithdrawAccountUsers(user.withdrawAccount, user.id);
     const payoutRisk = sharedUsers.length ? `<span class="risk-line">共享账号 ${sharedUsers.length}</span>` : "-";
-    return `<tr><td>${user.name}</td><td>${user.account}</td><td>${user.phone || "-"}</td><td>${user.inviteCode}</td><td>${referrer?.name || "无"}</td><td>${points(user.points)}</td><td><span class="tag ${statusClass}">${statusLabel}</span></td><td>${directReferralCount(user.id)} / ${user.slots || 0}</td><td>${points(user.repeatCredits || 0)}</td><td>${payoutRisk}</td><td><span class="tag ${user.frozen ? "frozen" : "active"}">${user.frozen ? "已冻结" : "正常"}</span></td><td><button class="link" data-user-detail="${user.id}">详情</button><button class="link" data-freeze-user="${user.id}">${user.frozen ? "解冻" : "冻结"}</button></td></tr>`;
+    const missingFields = profileMissingFields(user);
+    const profileRisk = missingFields.length ? `<span class="profile-line">缺：${missingFields.join("、")}</span>` : "";
+    return `<tr><td>${user.name}${profileRisk}</td><td>${user.account}</td><td>${user.phone || "-"}</td><td>${user.inviteCode}</td><td>${referrer?.name || "无"}</td><td>${points(user.points)}</td><td><span class="tag ${statusClass}">${statusLabel}</span></td><td>${directReferralCount(user.id)} / ${user.slots || 0}</td><td>${points(user.repeatCredits || 0)}</td><td>${payoutRisk}</td><td><span class="tag ${user.frozen ? "frozen" : "active"}">${user.frozen ? "已冻结" : "正常"}</span></td><td><button class="link" data-user-detail="${user.id}">详情</button><button class="link" data-freeze-user="${user.id}">${user.frozen ? "解冻" : "冻结"}</button></td></tr>`;
   }).join("") || `<tr><td colspan="12">没有符合条件的用户</td></tr>`;
 }
 
@@ -2489,10 +2624,12 @@ function filteredUsers() {
   const packageFilter = getSelectValue("#userPackageFilter", "all");
   const accountFilter = getSelectValue("#userAccountFilter", "all");
   const payoutRiskFilter = getSelectValue("#userPayoutRiskFilter", "all");
+  const profileFilter = getSelectValue("#userProfileFilter", "all");
 
   return state.users.filter((user) => {
     const referrer = findUser(user.referrerId);
     const hasPayoutRisk = sharedWithdrawAccountUsers(user.withdrawAccount, user.id).length > 0;
+    const isProfileComplete = profileComplete(user);
     const searchable = [
       user.name,
       user.account,
@@ -2511,7 +2648,10 @@ function filteredUsers() {
     const matchesPayoutRisk = payoutRiskFilter === "all"
       || (payoutRiskFilter === "shared" && hasPayoutRisk)
       || (payoutRiskFilter === "clean" && !hasPayoutRisk);
-    return matchesKeyword && matchesPackage && matchesAccount && matchesPayoutRisk;
+    const matchesProfile = profileFilter === "all"
+      || (profileFilter === "complete" && isProfileComplete)
+      || (profileFilter === "incomplete" && !isProfileComplete);
+    return matchesKeyword && matchesPackage && matchesAccount && matchesPayoutRisk && matchesProfile;
   });
 }
 
@@ -2706,6 +2846,20 @@ function applyTodoFocus(focus) {
     setValue("#withdrawSearchInput", "");
     setValue("#withdrawMinAmount", "");
   }
+  if (focus === "payoutRiskUsers") {
+    setValue("#userPackageFilter", "all");
+    setValue("#userAccountFilter", "all");
+    setValue("#userPayoutRiskFilter", "shared");
+    setValue("#userProfileFilter", "all");
+    setValue("#userSearchInput", "");
+  }
+  if (focus === "incompleteProfiles") {
+    setValue("#userPackageFilter", "all");
+    setValue("#userAccountFilter", "all");
+    setValue("#userPayoutRiskFilter", "all");
+    setValue("#userProfileFilter", "incomplete");
+    setValue("#userSearchInput", "");
+  }
 }
 
 document.querySelectorAll(".tabs").forEach((tabs) => {
@@ -2724,7 +2878,22 @@ document.addEventListener("click", (event) => {
   renderAll();
 });
 
-["#orderStatusFilter", "#orderTypeFilter", "#orderProofFilter", "#rewardStatusFilter", "#rewardTypeFilter", "#withdrawStatusFilter", "#userPackageFilter", "#userAccountFilter", "#userPayoutRiskFilter", "#logActionFilter", "#logLimitFilter"].forEach((selector) => {
+document.addEventListener("click", (event) => {
+  const openMemberTab = event.target.closest("[data-open-member-tab]");
+  if (!openMemberTab) return;
+  openTab(openMemberTab.dataset.openMemberTab);
+});
+
+document.addEventListener("click", (event) => {
+  const action = event.target.closest("[data-member-action]");
+  if (!action || action.dataset.memberAction !== "profile") return;
+  const form = document.querySelector("#profileForm");
+  form?.scrollIntoView({ behavior: "smooth", block: "center" });
+  const firstEmpty = [...(form?.querySelectorAll("input") || [])].find((input) => !input.value.trim());
+  firstEmpty?.focus();
+});
+
+["#orderStatusFilter", "#orderTypeFilter", "#orderProofFilter", "#rewardStatusFilter", "#rewardTypeFilter", "#withdrawStatusFilter", "#userPackageFilter", "#userAccountFilter", "#userPayoutRiskFilter", "#userProfileFilter", "#logActionFilter", "#logLimitFilter"].forEach((selector) => {
   document.querySelector(selector)?.addEventListener("change", renderAll);
 });
 
@@ -2759,10 +2928,12 @@ document.querySelector("#clearUserFiltersBtn")?.addEventListener("click", () => 
   const packageFilter = document.querySelector("#userPackageFilter");
   const accountFilter = document.querySelector("#userAccountFilter");
   const payoutRiskFilter = document.querySelector("#userPayoutRiskFilter");
+  const profileFilter = document.querySelector("#userProfileFilter");
   if (searchInput) searchInput.value = "";
   if (packageFilter) packageFilter.value = "all";
   if (accountFilter) accountFilter.value = "all";
   if (payoutRiskFilter) payoutRiskFilter.value = "all";
+  if (profileFilter) profileFilter.value = "all";
   renderAll();
 });
 
@@ -2850,11 +3021,12 @@ document.querySelector("#exportUsersBtn")?.addEventListener("click", () => {
   if (!requireAdmin()) return;
   downloadCsv(
     `amsystem-users-${exportStamp()}.csv`,
-    ["用户ID", "姓名", "账号", "手机", "邀请码", "推荐人", "积分", "推荐名额", "已用名额", "复购资格", "默认收款方式", "默认收款账号", "共享账号数量", "共享账号用户", "配套状态", "账号状态"],
+    ["用户ID", "姓名", "账号", "手机", "邀请码", "推荐人", "积分", "推荐名额", "已用名额", "复购资格", "默认收款方式", "默认收款账号", "资料状态", "缺失资料", "共享账号数量", "共享账号用户", "配套状态", "账号状态"],
     filteredUsers().map((user) => {
       const referrer = findUser(user.referrerId);
       const [, statusLabel] = packageStatus(user);
       const sharedUsers = sharedWithdrawAccountUsers(user.withdrawAccount, user.id);
+      const missingFields = profileMissingFields(user);
       return [
         user.id,
         user.name,
@@ -2868,6 +3040,8 @@ document.querySelector("#exportUsersBtn")?.addEventListener("click", () => {
         user.repeatCredits || 0,
         user.withdrawMethod || "",
         user.withdrawAccount || "",
+        missingFields.length ? "资料不完整" : "资料完整",
+        missingFields.join("；"),
         sharedUsers.length,
         sharedUsers.map((item) => `${item.name} / ${item.account}`).join("；"),
         statusLabel,
