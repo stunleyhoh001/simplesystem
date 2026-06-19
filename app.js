@@ -26,7 +26,7 @@ import {
 } from "https://www.gstatic.com/firebasejs/10.12.5/firebase-storage.js";
 
 const STORAGE_KEY = "amsystemFirebaseFallback";
-const APP_VERSION = "20260619-55";
+const APP_VERSION = "20260619-56";
 const PUBLIC_SITE_URL = "https://stunleyhoh001.github.io/simplesystem/";
 const TEST_CHECKLIST_KEY = "amsystemTestChecklist";
 const DEPLOY_CHECKLIST_KEY = "amsystemDeployChecklist";
@@ -389,7 +389,7 @@ async function saveState() {
   try {
     const cloudState = splitStateForCloud(state);
     if (isAdmin()) {
-      await setDoc(systemRef, { plans: cloudState.plans, updatedAt: serverTimestamp() });
+      await setDoc(systemRef, { plans: cloudState.plans, testDataClearedAt: cloudState.testDataClearedAt || "", updatedAt: serverTimestamp() });
       await Promise.all([
         syncAdminCollection(usersRef, cloudState.users),
         syncAdminCollection(ordersRef, cloudState.orders),
@@ -493,8 +493,34 @@ function mergeById(primary = [], fallback = []) {
   ];
 }
 
+function latestIsoDate(...values) {
+  return values
+    .filter(Boolean)
+    .sort((a, b) => new Date(b) - new Date(a))[0] || "";
+}
+
+function recordIsAfterTestClear(record, data = state) {
+  if (!data?.testDataClearedAt) return true;
+  const recordDate = record?.createdAt || record?.paidAt || record?.reviewedAt || record?.updatedAt || "";
+  if (!recordDate) return false;
+  return new Date(recordDate) > new Date(data.testDataClearedAt);
+}
+
+function filterBusinessRecordsAfterClear(data) {
+  if (!data?.testDataClearedAt) return data;
+  return {
+    ...data,
+    orders: (data.orders || []).filter((item) => recordIsAfterTestClear(item, data)),
+    rewards: (data.rewards || []).filter((item) => recordIsAfterTestClear(item, data)),
+    withdraws: (data.withdraws || []).filter((item) => recordIsAfterTestClear(item, data)),
+    pointLogs: (data.pointLogs || []).filter((item) => recordIsAfterTestClear(item, data)),
+    repeatCreditLogs: (data.repeatCreditLogs || []).filter((item) => recordIsAfterTestClear(item, data)),
+  };
+}
+
 function mergeLocalPendingState(cloudState, localState, userId) {
   if (!cloudState || !localState || !userId) return cloudState;
+  const testDataClearedAt = latestIsoDate(cloudState.testDataClearedAt, localState.testDataClearedAt);
   const localOwnerIds = new Set([userId]);
   const localUser = (localState.users || []).find((user) =>
     user.id === userId
@@ -511,6 +537,7 @@ function mergeLocalPendingState(cloudState, localState, userId) {
   const hasUser = (cloudState.users || []).some((user) => user.id === userId);
   return {
     ...cloudState,
+    testDataClearedAt,
     currentUserId: userId,
     users: hasUser || !localUser ? cloudState.users : [...(cloudState.users || []), localUser],
     orders: mergeById(cloudState.orders || [], localPendingOrders),
@@ -522,6 +549,7 @@ function composeStateFromCloud(systemSnapshot, usersSnapshot, fallback, records 
   if (systemSnapshot.exists() && systemSnapshot.data().state && usersSnapshot.empty) {
     return systemSnapshot.data().state;
   }
+  const systemData = systemSnapshot.exists() ? systemSnapshot.data() : {};
   const plans = systemSnapshot.exists() && Array.isArray(systemSnapshot.data().plans)
     ? systemSnapshot.data().plans
     : fallback.plans;
@@ -545,6 +573,7 @@ function composeStateFromCloud(systemSnapshot, usersSnapshot, fallback, records 
 
   return {
     currentUserId: state?.currentUserId || firebaseUser?.uid || fallback.currentUserId,
+    testDataClearedAt: systemData.testDataClearedAt || fallback.testDataClearedAt || "",
     plans,
     users: users.length ? users : fallback.users,
     orders: orders.length ? orders : fallback.orders,
@@ -558,6 +587,7 @@ function composeStateFromCloud(systemSnapshot, usersSnapshot, fallback, records 
 }
 
 function composeStateFromUserDoc(systemSnapshot, userSnapshot, fallback, records = {}) {
+  const systemData = systemSnapshot.exists() ? systemSnapshot.data() : {};
   const plans = systemSnapshot.exists() && Array.isArray(systemSnapshot.data().plans)
     ? systemSnapshot.data().plans
     : fallback.plans;
@@ -565,6 +595,7 @@ function composeStateFromUserDoc(systemSnapshot, userSnapshot, fallback, records
   if (!userSnapshot.exists()) {
     return {
       ...fallback,
+      testDataClearedAt: systemData.testDataClearedAt || fallback.testDataClearedAt || "",
       currentUserId: firebaseUser.uid,
       plans,
       users: [],
@@ -581,6 +612,7 @@ function composeStateFromUserDoc(systemSnapshot, userSnapshot, fallback, records
   const user = normalizeUserDoc(userSnapshot.id, data);
   return {
     currentUserId: user.id,
+    testDataClearedAt: systemData.testDataClearedAt || fallback.testDataClearedAt || "",
     plans,
     users: [user],
     orders: records.orders?.length ? records.orders : (Array.isArray(data.orders) ? data.orders : []),
@@ -619,6 +651,7 @@ function normalizeUserDoc(id, data) {
 function splitStateForCloud(data) {
   return {
     plans: data.plans,
+    testDataClearedAt: data.testDataClearedAt || "",
     adminLogs: data.adminLogs || [],
     users: data.users.map(userProfileForCloud),
     orders: data.orders || [],
@@ -974,6 +1007,7 @@ function prepareLoadedState(data) {
     directRepeatRate: planDirectRepeatRate(plan),
     repeatRate: planPoolRepeatRate(plan),
   }));
+  data = filterBusinessRecordsAfterClear(data);
   backfillOrderPlanSnapshots(data);
   return data;
 }
@@ -2566,6 +2600,7 @@ function planUsed(planId) {
   return (state.orders || []).some((order) =>
     order.planId === planId
     && ["pending", "paid"].includes(order.status)
+    && recordIsAfterTestClear(order)
   );
 }
 
@@ -4893,6 +4928,7 @@ document.querySelector("#restoreBackupInput")?.addEventListener("change", async 
 
 function clearBusinessTestData() {
   editingPlanId = "";
+  state.testDataClearedAt = new Date().toISOString();
   state.orders = [];
   state.rewards = [];
   state.withdraws = [];
