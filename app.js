@@ -26,7 +26,7 @@ import {
 } from "https://www.gstatic.com/firebasejs/10.12.5/firebase-storage.js";
 
 const STORAGE_KEY = "amsystemFirebaseFallback";
-const APP_VERSION = "20260619-61";
+const APP_VERSION = "20260619-63";
 const PUBLIC_SITE_URL = "https://stunleyhoh001.github.io/simplesystem/";
 const TEST_CHECKLIST_KEY = "amsystemTestChecklist";
 const DEPLOY_CHECKLIST_KEY = "amsystemDeployChecklist";
@@ -293,14 +293,18 @@ function pastDate(days) {
   return date.toISOString();
 }
 
+function defaultAffiliatePlans() {
+  return [
+    { id: "plan_rm180", name: "RM180 启动配套", amount: 180, points: 18000, slots: 10, repeatCredits: 10, repeatCooldownHours: 0, validDays: 30, firstRate: 20, directRepeatRate: 10, repeatRate: 10 },
+    { id: "plan_rm580", name: "RM580 进阶配套", amount: 580, points: 58000, slots: 35, repeatCredits: 10, repeatCooldownHours: 0, validDays: 60, firstRate: 20, directRepeatRate: 10, repeatRate: 10 },
+  ];
+}
+
 function createSeedData() {
   return {
     currentUserId: "",
     testDataClearedAt: new Date().toISOString(),
-    plans: [
-      { id: "plan_rm180", name: "RM180 启动配套", amount: 180, points: 18000, slots: 10, repeatCredits: 10, repeatCooldownHours: 0, validDays: 30, firstRate: 20, directRepeatRate: 10, repeatRate: 10 },
-      { id: "plan_rm580", name: "RM580 进阶配套", amount: 580, points: 58000, slots: 35, repeatCredits: 10, repeatCooldownHours: 0, validDays: 60, firstRate: 20, directRepeatRate: 10, repeatRate: 10 },
-    ],
+    plans: defaultAffiliatePlans(),
     users: [],
     orders: [],
     pointLogs: [],
@@ -1002,12 +1006,35 @@ function backfillOrderPlanSnapshots(data = state) {
   return count;
 }
 
-function prepareLoadedState(data) {
-  data.plans = (data.plans || []).map((plan) => ({
+function looksLikeAffiliatePlan(plan) {
+  return Boolean(plan)
+    && Number(plan.amount || 0) > 0
+    && Number(plan.points || 0) > 0
+    && Number(plan.validDays || 0) > 0
+    && plan.firstRate !== undefined;
+}
+
+function normalizeAffiliatePlans(plans = []) {
+  const normalized = (plans || []).filter(looksLikeAffiliatePlan).map((plan) => ({
     ...plan,
+    points: Number(plan.points || 0),
+    repeatCredits: planRepeatCredits(plan),
+    repeatCooldownHours: planRepeatCooldownHours(plan),
+    firstRate: Number(plan.firstRate || 0),
     directRepeatRate: planDirectRepeatRate(plan),
     repeatRate: planPoolRepeatRate(plan),
   }));
+  if (normalized.length) return normalized;
+  return defaultAffiliatePlans();
+}
+
+function prepareLoadedState(data) {
+  const originalPlans = data.plans || [];
+  data.plans = normalizeAffiliatePlans(originalPlans);
+  if (originalPlans.length && !originalPlans.some(looksLikeAffiliatePlan)) {
+    data.planRulesResetAt = new Date().toISOString();
+    data.planRulesResetReason = "检测到配套参数不完整，已恢复默认充值配套";
+  }
   data = filterBusinessRecordsAfterClear(data);
   backfillOrderPlanSnapshots(data);
   return data;
@@ -1156,6 +1183,7 @@ function duplicatePaymentRef(ref, userId = "") {
   if (!normalized) return null;
   return (state.orders || []).find((order) =>
     order.status !== "cancelled"
+    && recordIsAfterTestClear(order)
     && String(order.paymentRef || "").trim().toLowerCase() === normalized
     && (!userId || order.userId === userId)
   );
@@ -1166,6 +1194,7 @@ function duplicateProofName(fileName, userId = "") {
   if (!normalized) return null;
   return (state.orders || []).find((order) =>
     order.status !== "cancelled"
+    && recordIsAfterTestClear(order)
     && String(order.proofName || "").trim().toLowerCase() === normalized
     && (!userId || order.userId === userId)
   );
@@ -1176,7 +1205,7 @@ function duplicateOrderRisks(data = state) {
   const seenRefs = new Map();
   const seenProofs = new Map();
   (data.orders || [])
-    .filter((order) => order.status !== "cancelled")
+    .filter((order) => order.status !== "cancelled" && recordIsAfterTestClear(order, data))
     .forEach((order) => {
       const refKey = `${order.userId}:${String(order.paymentRef || "").trim().toLowerCase()}`;
       if (order.paymentRef && seenRefs.has(refKey)) {
@@ -1217,20 +1246,22 @@ function orderRiskLabels(order, data = state) {
     labels.push(`订单金额 ${money(order.amount)} 与订单配套快照 ${money(lockedPlan.amount)} 不一致`);
   }
   if (paymentRef) {
-    const duplicateRef = (data.orders || []).find((item) =>
-      item.id !== order.id
-      && item.userId === order.userId
-      && item.status !== "cancelled"
-      && String(item.paymentRef || "").trim().toLowerCase() === paymentRef
+      const duplicateRef = (data.orders || []).find((item) =>
+        item.id !== order.id
+        && item.userId === order.userId
+        && item.status !== "cancelled"
+        && recordIsAfterTestClear(item, data)
+        && String(item.paymentRef || "").trim().toLowerCase() === paymentRef
     );
     if (duplicateRef) labels.push(`重复付款参考号：${duplicateRef.id}`);
   }
   if (proofName) {
-    const duplicateProof = (data.orders || []).find((item) =>
-      item.id !== order.id
-      && item.userId === order.userId
-      && item.status !== "cancelled"
-      && String(item.proofName || "").trim().toLowerCase() === proofName
+      const duplicateProof = (data.orders || []).find((item) =>
+        item.id !== order.id
+        && item.userId === order.userId
+        && item.status !== "cancelled"
+        && recordIsAfterTestClear(item, data)
+        && String(item.proofName || "").trim().toLowerCase() === proofName
     );
     if (duplicateProof) labels.push(`重复凭证名：${duplicateProof.id}`);
   }
@@ -1388,6 +1419,7 @@ function hasPaidOrder(data, userId, excludeOrderId = "") {
     order.userId === userId
     && order.status === "paid"
     && order.id !== excludeOrderId
+    && recordIsAfterTestClear(order, data)
   );
 }
 
