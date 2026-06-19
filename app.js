@@ -26,7 +26,7 @@ import {
 } from "https://www.gstatic.com/firebasejs/10.12.5/firebase-storage.js";
 
 const STORAGE_KEY = "amsystemFirebaseFallback";
-const APP_VERSION = "20260619-48";
+const APP_VERSION = "20260619-49";
 const TEST_CHECKLIST_KEY = "amsystemTestChecklist";
 const DEPLOY_CHECKLIST_KEY = "amsystemDeployChecklist";
 const WITHDRAW_COOLDOWN_HOURS = 24;
@@ -867,7 +867,7 @@ async function copyText(text) {
 function inviteMessage(user = currentUser()) {
   const inviteLink = document.querySelector("#inviteLink")?.textContent || `${location.origin}${location.pathname}?ref=${user.inviteCode}`;
   return [
-    `${user.name || "朋友"} 邀请你加入 AMSYSTEM。`,
+    `${user.name || "朋友"} 邀请你加入简单的联盟营销系统。`,
     `推荐码：${user.inviteCode}`,
     `注册链接：${inviteLink}`,
     "注册后输入推荐码绑定推荐人，再申请充值配套。",
