@@ -26,7 +26,7 @@ import {
 } from "https://www.gstatic.com/firebasejs/10.12.5/firebase-storage.js";
 
 const STORAGE_KEY = "amsystemFirebaseFallback";
-const APP_VERSION = "20260619-52";
+const APP_VERSION = "20260619-53";
 const PUBLIC_SITE_URL = "https://stunleyhoh001.github.io/simplesystem/";
 const TEST_CHECKLIST_KEY = "amsystemTestChecklist";
 const DEPLOY_CHECKLIST_KEY = "amsystemDeployChecklist";
@@ -992,8 +992,33 @@ function orderPlanSummary(plan) {
   ].join(" / ");
 }
 
+function guestUser() {
+  return {
+    id: "__guest__",
+    name: "未登录用户",
+    account: "",
+    phone: "",
+    withdrawMethod: "",
+    withdrawAccount: "",
+    inviteCode: "",
+    referrerId: "",
+    level: "访客",
+    points: 0,
+    slots: 0,
+    repeatCredits: 0,
+    repeatCreditQueueAt: "",
+    repeatCooldownUntil: "",
+    packageUntil: "",
+    frozen: false,
+  };
+}
+
 function currentUser() {
-  return findUser(state.currentUserId) || state.users[0];
+  if (!firebaseUser) return guestUser();
+  return findUser(firebaseUser.uid)
+    || state.users.find((user) => user.firebaseUid === firebaseUser.uid || user.account === firebaseUser.email)
+    || findUser(state.currentUserId)
+    || guestUser();
 }
 
 function isAdmin() {
@@ -1985,8 +2010,8 @@ function renderMember() {
   const user = currentUser();
   const [statusClass, statusLabel] = packageStatus(user);
   const used = directReferralCount(user.id);
-  const inviteLink = `${location.origin}${location.pathname}?ref=${user.inviteCode}`;
-  document.querySelector("#memberName").textContent = `${user.name}（${user.inviteCode}）`;
+  const inviteLink = firebaseUser && user.inviteCode ? `${location.origin}${location.pathname}?ref=${user.inviteCode}` : "-";
+  document.querySelector("#memberName").textContent = user.inviteCode ? `${user.name}（${user.inviteCode}）` : user.name;
   renderMemberProfileStatus(user);
   document.querySelector("#memberPoints").textContent = points(user.points);
   document.querySelector("#memberConfirmed").textContent = money(confirmedAvailable(user.id));
@@ -2147,6 +2172,10 @@ function renderInviteCodeBox(user) {
   const inviteLinkBox = document.querySelector("#inviteLink");
   if (!inviteLinkBox?.parentNode) return;
   let codeBox = document.querySelector("#inviteCodeBox");
+  if (!firebaseUser || !user.inviteCode) {
+    codeBox?.remove();
+    return;
+  }
   if (!codeBox) {
     codeBox = document.createElement("div");
     codeBox.id = "inviteCodeBox";
@@ -3628,6 +3657,21 @@ function updateAuthStatusClean() {
   if (syncStatus) syncStatus.textContent = readableSyncMessage(syncMessage);
 }
 
+function clearSignedOutSensitiveFields() {
+  state.currentUserId = "";
+  ["#profileForm", "#paymentInfoForm", "#withdrawForm", "#registerForm"].forEach((selector) => {
+    const form = document.querySelector(selector);
+    if (form) form.reset();
+  });
+  document.querySelector("#inviteLink")?.replaceChildren(document.createTextNode("-"));
+  document.querySelector("#inviteCodeBox")?.remove();
+  const localHint = document.querySelector("#localSyncHint");
+  if (localHint) {
+    localHint.textContent = "";
+    localHint.hidden = true;
+  }
+}
+
 function renderAdminLocked() {
   document.querySelector("#metricUsers").textContent = "-";
   document.querySelector("#metricSales").textContent = "-";
@@ -3684,6 +3728,7 @@ function renderAll() {
   updateAuthStatusClean();
   renderAppVersion();
   renderAdminActionButtons();
+  if (!firebaseUser) clearSignedOutSensitiveFields();
   renderMember();
   if (isAdmin()) {
     renderAdmin();
