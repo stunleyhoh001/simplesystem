@@ -26,7 +26,7 @@ import {
 } from "https://www.gstatic.com/firebasejs/10.12.5/firebase-storage.js";
 
 const STORAGE_KEY = "amsystemFirebaseFallback";
-const APP_VERSION = "20260619-59";
+const APP_VERSION = "20260619-60";
 const PUBLIC_SITE_URL = "https://stunleyhoh001.github.io/simplesystem/";
 const TEST_CHECKLIST_KEY = "amsystemTestChecklist";
 const DEPLOY_CHECKLIST_KEY = "amsystemDeployChecklist";
@@ -1502,6 +1502,23 @@ function releaseDueRewardParts(reward, now = new Date()) {
   reward.confirmAfter = fullyReleased
     ? reward.releasePlan[reward.releasePlan.length - 1].releaseAt
     : reward.releasePlan.find((part) => !part.released)?.releaseAt || reward.confirmAfter;
+  return true;
+}
+
+function settleRewardNow(reward, now = new Date()) {
+  if (!reward || !["pending", "releasing"].includes(reward.status)) return false;
+  if (Array.isArray(reward.releasePlan)) {
+    reward.releasePlan = reward.releasePlan.map((part) => ({
+      ...part,
+      released: true,
+      releasedAt: part.releasedAt || now.toISOString(),
+    }));
+    reward.releasedAmount = Number(reward.amount || 0);
+  }
+  reward.status = "confirmed";
+  reward.confirmAfter = now.toISOString();
+  reward.reviewedAt = now.toISOString();
+  reward.reviewNote = [reward.reviewNote, TEST_INSTANT_MODE ? "测试即时模式手动结算" : "手动确认到期奖励"].filter(Boolean).join(" / ");
   return true;
 }
 
@@ -4504,9 +4521,11 @@ document.querySelector("#withdrawForm").addEventListener("submit", async (event)
 document.querySelector("#confirmDueBtn").addEventListener("click", async () => {
   if (!requireAdmin()) return;
   const dueRewards = state.rewards.filter((reward) =>
-    ["pending", "releasing"].includes(reward.status) && new Date(reward.confirmAfter) <= new Date()
+    ["pending", "releasing"].includes(reward.status)
+    && (TEST_INSTANT_MODE || new Date(reward.confirmAfter) <= new Date())
   );
   const dueAmount = dueRewards.reduce((sum, reward) => {
+    if (TEST_INSTANT_MODE) return sum + Math.max(Number(reward.amount || 0) - Number(reward.releasedAmount || 0), 0);
     if (Array.isArray(reward.releasePlan)) {
       return sum + reward.releasePlan
         .filter((part) => !part.released && new Date(part.releaseAt) <= new Date())
@@ -4515,10 +4534,15 @@ document.querySelector("#confirmDueBtn").addEventListener("click", async () => {
     return sum + Number(reward.amount || 0);
   }, 0);
   if (!dueRewards.length) return toast("暂无到期可确认奖励");
-  if (!window.confirm(`确定批量处理到期奖励？\n\n数量：${dueRewards.length} 笔\n预计释放/确认：${money(dueAmount)}`)) return;
+  if (!window.confirm(`${TEST_INSTANT_MODE ? "测试即时模式：确定强制结算全部待处理奖励？" : "确定批量处理到期奖励？"}\n\n数量：${dueRewards.length} 笔\n预计释放/确认：${money(dueAmount)}`)) return;
   let count = 0;
   const now = new Date();
   state.rewards.forEach((reward) => {
+    if (TEST_INSTANT_MODE && settleRewardNow(reward, now)) {
+      count += 1;
+      addAdminLog("测试即时结算奖励", reward.orderId, `奖励 ${money(reward.amount)}`);
+      return;
+    }
     if (Array.isArray(reward.releasePlan) && ["pending", "releasing"].includes(reward.status) && releaseDueRewardParts(reward, now)) {
       count += 1;
       addAdminLog("释放分期奖励", reward.orderId, `已释放 ${money(reward.releasedAmount || 0)} / ${money(reward.amount)}`);
@@ -4832,7 +4856,9 @@ document.body.addEventListener("click", async (event) => {
     if (note === null) return;
     if (!window.confirm(`确定${actionLabel}这笔奖励？\n\n订单：${reward.orderId}\n金额：${money(reward.amount)}\n备注：${note.trim() || "无"}`)) return;
     if (rewardAction.dataset.confirmReward) {
-      if (Array.isArray(reward.releasePlan)) {
+      if (TEST_INSTANT_MODE) {
+        settleRewardNow(reward);
+      } else if (Array.isArray(reward.releasePlan)) {
         releaseDueRewardParts(reward);
       } else {
         reward.status = "confirmed";
