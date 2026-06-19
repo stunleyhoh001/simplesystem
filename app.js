@@ -26,7 +26,7 @@ import {
 } from "https://www.gstatic.com/firebasejs/10.12.5/firebase-storage.js";
 
 const STORAGE_KEY = "amsystemFirebaseFallback";
-const APP_VERSION = "20260619-53";
+const APP_VERSION = "20260619-54";
 const PUBLIC_SITE_URL = "https://stunleyhoh001.github.io/simplesystem/";
 const TEST_CHECKLIST_KEY = "amsystemTestChecklist";
 const DEPLOY_CHECKLIST_KEY = "amsystemDeployChecklist";
@@ -2581,7 +2581,10 @@ function ensurePlanCancelButton() {
 }
 
 function planUsed(planId) {
-  return (state.orders || []).some((order) => order.planId === planId);
+  return (state.orders || []).some((order) =>
+    order.planId === planId
+    && ["pending", "paid"].includes(order.status)
+  );
 }
 
 function planFromForm(form) {
@@ -2638,7 +2641,7 @@ function renderAdminPlans() {
       <span>冷却 ${planRepeatCooldownHours(plan)} 小时 / 有效期 ${plan.validDays} 天 / 首充 ${plan.firstRate}% / 复购直推 ${planDirectRepeatRate(plan)}% / 资格池 ${planPoolRepeatRate(plan)}%</span>
       <div class="actions">
         <button class="link" type="button" data-edit-plan="${plan.id}">编辑</button>
-        ${planUsed(plan.id) ? `<span class="muted-line">已有订单，不能删除</span>` : `<button class="link danger-link" type="button" data-delete-plan="${plan.id}">删除</button>`}
+        ${planUsed(plan.id) ? `<span class="muted-line">已有待处理或已付款订单，不能删除</span>` : `<button class="link danger-link" type="button" data-delete-plan="${plan.id}">删除</button>`}
       </div>
     </article>
   `).join("");
@@ -4607,7 +4610,7 @@ document.body.addEventListener("click", async (event) => {
     if (!requireAdmin()) return;
     const plan = findPlan(deletePlan.dataset.deletePlan);
     if (!plan) return toast("找不到配套");
-    if (planUsed(plan.id)) return toast("已有订单使用这个配套，不能删除");
+    if (planUsed(plan.id)) return toast("已有待处理或已付款订单使用这个配套，不能删除");
     if (!window.confirm(`确定删除配套：${plan.name}？`)) return;
     state.plans = state.plans.filter((item) => item.id !== plan.id);
     if (editingPlanId === plan.id) resetPlanForm();
@@ -4907,6 +4910,7 @@ document.querySelector("#restoreBackupInput")?.addEventListener("change", async 
 });
 
 function clearBusinessTestData() {
+  editingPlanId = "";
   state.orders = [];
   state.rewards = [];
   state.withdraws = [];
@@ -4935,6 +4939,7 @@ document.querySelector("#clearTestDataBtn")?.addEventListener("click", async () 
   }
   exportBundle();
   clearBusinessTestData();
+  resetPlanForm();
   addAdminLog("清理测试数据", "系统", "保留用户、推荐关系和配套规则；清空订单、奖励、提现和流水");
   await saveState();
   renderAll();
