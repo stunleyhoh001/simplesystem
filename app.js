@@ -26,11 +26,12 @@ import {
 } from "https://www.gstatic.com/firebasejs/10.12.5/firebase-storage.js";
 
 const STORAGE_KEY = "amsystemFirebaseFallback";
-const APP_VERSION = "20260619-58";
+const APP_VERSION = "20260619-59";
 const PUBLIC_SITE_URL = "https://stunleyhoh001.github.io/simplesystem/";
 const TEST_CHECKLIST_KEY = "amsystemTestChecklist";
 const DEPLOY_CHECKLIST_KEY = "amsystemDeployChecklist";
-const WITHDRAW_COOLDOWN_HOURS = 24;
+const TEST_INSTANT_MODE = true;
+const WITHDRAW_COOLDOWN_HOURS = TEST_INSTANT_MODE ? 0 : 24;
 const SYSTEM_DOC_PATH = ["amsystem", "main"];
 const USER_COLLECTION = "amsystemUsers";
 const ORDER_COLLECTION = "amsystemOrders";
@@ -41,8 +42,8 @@ const REPEAT_CREDIT_LOG_COLLECTION = "amsystemRepeatCreditLogs";
 const ADMIN_LOG_COLLECTION = "amsystemAdminLogs";
 const INVITE_COLLECTION = "amsystemInviteCodes";
 const REFERRAL_COLLECTION = "amsystemReferrals";
-const CONFIRM_DAYS = 7;
-const REPEAT_RELEASE_DAYS = [7, 14, 30];
+const CONFIRM_DAYS = TEST_INSTANT_MODE ? 0 : 7;
+const REPEAT_RELEASE_DAYS = TEST_INSTANT_MODE ? [0] : [7, 14, 30];
 const MIN_WITHDRAW_AMOUNT = 50;
 const PROOF_UPLOAD_TIMEOUT_MS = 60000;
 const PROOF_STORAGE_ATTEMPT_MS = 12000;
@@ -297,8 +298,8 @@ function createSeedData() {
     currentUserId: "",
     testDataClearedAt: new Date().toISOString(),
     plans: [
-      { id: "plan_rm180", name: "RM180 启动配套", amount: 180, points: 18000, slots: 10, repeatCredits: 10, repeatCooldownHours: 24, validDays: 30, firstRate: 20, directRepeatRate: 10, repeatRate: 10 },
-      { id: "plan_rm580", name: "RM580 进阶配套", amount: 580, points: 58000, slots: 35, repeatCredits: 10, repeatCooldownHours: 24, validDays: 60, firstRate: 20, directRepeatRate: 10, repeatRate: 10 },
+      { id: "plan_rm180", name: "RM180 启动配套", amount: 180, points: 18000, slots: 10, repeatCredits: 10, repeatCooldownHours: 0, validDays: 30, firstRate: 20, directRepeatRate: 10, repeatRate: 10 },
+      { id: "plan_rm580", name: "RM580 进阶配套", amount: 580, points: 58000, slots: 35, repeatCredits: 10, repeatCooldownHours: 0, validDays: 60, firstRate: 20, directRepeatRate: 10, repeatRate: 10 },
     ],
     users: [],
     orders: [],
@@ -920,6 +921,7 @@ function addHours(iso, hours) {
 }
 
 function planRepeatCooldownHours(plan) {
+  if (TEST_INSTANT_MODE) return 0;
   return Number(plan.repeatCooldownHours ?? 24);
 }
 
@@ -1475,8 +1477,8 @@ function createReleasePlan(totalAmount, paidAt) {
     return {
       amount: partAmount,
       releaseAt: addDays(paidAt, days),
-      released: false,
-      releasedAt: "",
+      released: TEST_INSTANT_MODE,
+      releasedAt: TEST_INSTANT_MODE ? paidAt : "",
     };
   });
 }
@@ -1530,9 +1532,11 @@ function createFirstReward(data, order, buyer, plan, paidAt = order.createdAt) {
     type: "first",
     rate,
     amount,
-    status: "pending",
+    status: TEST_INSTANT_MODE ? "confirmed" : "pending",
     confirmAfter: addDays(paidAt, CONFIRM_DAYS),
     createdAt: paidAt,
+    reviewedAt: TEST_INSTANT_MODE ? paidAt : "",
+    reviewNote: TEST_INSTANT_MODE ? "测试即时模式自动确认" : "",
   };
   data.rewards.push(reward);
   return { reward, receiverName: referrer.name || referrer.account || referrer.id, amount };
@@ -1554,11 +1558,13 @@ function createRepeatDirectReward(data, order, buyer, plan, paidAt = order.creat
     rewardMode: "direct",
     rate,
     amount,
-    status: "pending",
-    releasedAmount: 0,
+    status: TEST_INSTANT_MODE ? "confirmed" : "pending",
+    releasedAmount: TEST_INSTANT_MODE ? amount : 0,
     releasePlan: createReleasePlan(amount, paidAt),
     confirmAfter: addDays(paidAt, CONFIRM_DAYS),
     createdAt: paidAt,
+    reviewedAt: TEST_INSTANT_MODE ? paidAt : "",
+    reviewNote: TEST_INSTANT_MODE ? "测试即时模式自动释放" : "",
   };
   data.rewards.push(reward);
   return { reward, receiverName: referrer.name || referrer.account || referrer.id, amount };
@@ -1581,11 +1587,13 @@ function createRepeatPoolReward(data, order, buyer, plan, paidAt = order.created
     rewardMode: "pool",
     rate,
     amount,
-    status: "pending",
-    releasedAmount: 0,
+    status: TEST_INSTANT_MODE ? "confirmed" : "pending",
+    releasedAmount: TEST_INSTANT_MODE ? amount : 0,
     releasePlan: createReleasePlan(amount, paidAt),
     confirmAfter: addDays(paidAt, CONFIRM_DAYS),
     createdAt: paidAt,
+    reviewedAt: TEST_INSTANT_MODE ? paidAt : "",
+    reviewNote: TEST_INSTANT_MODE ? "测试即时模式自动释放" : "",
   };
   data.rewards.push(reward);
   return { reward, receiverName: receiver.name || receiver.account || receiver.id, amount };
@@ -2327,7 +2335,7 @@ function renderRewardRules() {
       <span>下线复购奖励：下线复购时，原推荐人获得 ${money(plan.amount * planDirectRepeatRate(plan) / 100)}，需推荐人配套有效。</span>
       <span>复购资格：用户复购后获得 ${planRepeatCredits(plan)} 个资格，可接收后续奖励池奖励。</span>
       <span>奖励池奖励：后续复购订单会自动派发给奖励池用户，每次约 ${money(plan.amount * planPoolRepeatRate(plan) / 100)}，并扣 1 个资格。</span>
-      <span>奖励先待确认，${CONFIRM_DAYS} 天后由后台确认。</span>
+      <span>${TEST_INSTANT_MODE ? "测试期奖励即时确认/释放，方便连续测试。" : `奖励先待确认，${CONFIRM_DAYS} 天后由后台确认。`}</span>
     </article>
   `).join("");
 }
@@ -2571,7 +2579,7 @@ function ensurePlanCooldownField() {
   const repeatField = form.querySelector("[name='repeatCredits']")?.closest("label");
   if (!repeatField) return;
   const field = document.createElement("label");
-  field.innerHTML = `复购冷却小时<input name="repeatCooldownHours" type="number" min="0" step="1" value="24" required />`;
+  field.innerHTML = `复购冷却小时<input name="repeatCooldownHours" type="number" min="0" step="1" value="0" required />`;
   repeatField.insertAdjacentElement("afterend", field);
 }
 
@@ -2604,7 +2612,7 @@ function planFromForm(form) {
     points: Number(form.get("points")),
     slots: Number(form.get("slots")),
     repeatCredits: Number(form.get("repeatCredits")),
-    repeatCooldownHours: Number(form.get("repeatCooldownHours") || 24),
+    repeatCooldownHours: Number(form.get("repeatCooldownHours") || 0),
     validDays: Number(form.get("validDays")),
     firstRate: Number(form.get("firstRate")),
     directRepeatRate: Number(form.get("directRepeatRate") || 10),
@@ -3015,7 +3023,7 @@ function renderAdminRiskRules() {
     {
       title: "复购冷却",
       rows: [
-        "复购付款确认后，用户进入冷却期。",
+        TEST_INSTANT_MODE ? "测试即时模式已开启：复购付款确认后冷却为 0 小时。" : "复购付款确认后，用户进入冷却期。",
         `当前配套冷却：${planCooldowns || "暂无配套"}`,
         "冷却期内不能再次提交复购订单；已有待确认复购订单也不能重复提交。",
       ],
@@ -3023,7 +3031,7 @@ function renderAdminRiskRules() {
     {
       title: "复购奖励分期",
       rows: [
-        `下线复购奖励和奖励池奖励分 ${REPEAT_RELEASE_DAYS.length} 期释放。`,
+        TEST_INSTANT_MODE ? "测试即时模式已开启：下线复购奖励和奖励池奖励会即时释放。" : `下线复购奖励和奖励池奖励分 ${REPEAT_RELEASE_DAYS.length} 期释放。`,
         `释放日：第 ${REPEAT_RELEASE_DAYS.join(" / 第 ")} 天。`,
         "只有已释放金额会计入用户可提现余额。",
       ],

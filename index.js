@@ -9,8 +9,9 @@ const ADMIN_EMAILS = [
   "stanleyhoh79@gmail.com",
 ];
 
-const CONFIRM_DAYS = 7;
-const REPEAT_RELEASE_DAYS = [7, 14, 30];
+const TEST_INSTANT_MODE = true;
+const CONFIRM_DAYS = TEST_INSTANT_MODE ? 0 : 7;
+const REPEAT_RELEASE_DAYS = TEST_INSTANT_MODE ? [0] : [7, 14, 30];
 
 function assertAdmin(request) {
   const email = request.auth && request.auth.token && request.auth.token.email;
@@ -33,6 +34,7 @@ function addHours(date, hours) {
 }
 
 function planRepeatCooldownHours(plan) {
+  if (TEST_INSTANT_MODE) return 0;
   return Number(plan.repeatCooldownHours ?? 24);
 }
 
@@ -84,8 +86,8 @@ function createReleasePlan(totalAmount, paidAt) {
     return {
       amount: partAmount,
       releaseAt: addDays(paidAt, days),
-      released: false,
-      releasedAt: "",
+      released: TEST_INSTANT_MODE,
+      releasedAt: TEST_INSTANT_MODE ? paidAt : "",
     };
   });
 }
@@ -107,8 +109,10 @@ function createReward(tx, payload) {
   const rewardRef = db.collection("amsystemRewards").doc();
   tx.set(rewardRef, {
     id: rewardRef.id,
-    status: "pending",
+    status: TEST_INSTANT_MODE ? "confirmed" : "pending",
     confirmAfter: addDays(payload.createdAt, CONFIRM_DAYS),
+    reviewedAt: TEST_INSTANT_MODE ? payload.createdAt : "",
+    reviewNote: TEST_INSTANT_MODE ? "测试即时模式自动确认" : "",
     updatedAt: admin.firestore.FieldValue.serverTimestamp(),
     ...payload,
   });
@@ -286,7 +290,7 @@ exports.confirmOrder = onCall(async (request) => {
           rewardMode: "pool",
           rate,
           amount: repeatRewardAmount,
-          releasedAmount: 0,
+          releasedAmount: TEST_INSTANT_MODE ? repeatRewardAmount : 0,
           releasePlan: createReleasePlan(repeatRewardAmount, paidAt),
           createdAt: paidAt,
         });
@@ -306,7 +310,7 @@ exports.confirmOrder = onCall(async (request) => {
           rewardMode: "direct",
           rate,
           amount: directRewardAmount,
-          releasedAmount: 0,
+          releasedAmount: TEST_INSTANT_MODE ? directRewardAmount : 0,
           releasePlan: createReleasePlan(directRewardAmount, paidAt),
           createdAt: paidAt,
         });
