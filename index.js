@@ -44,6 +44,18 @@ function planRepeatCredits(plan) {
   return Number(plan.repeatCredits ?? 10);
 }
 
+function planDirectRepeatRate(plan) {
+  return Number(plan && plan.directRepeatRate !== undefined ? plan.directRepeatRate : 10);
+}
+
+function planPoolRepeatRate(plan) {
+  return Number(plan && plan.repeatRate !== undefined ? plan.repeatRate : 10);
+}
+
+function isActivePackage(user) {
+  return Boolean(user && user.packageUntil) && new Date(user.packageUntil) > new Date() && !user.frozen;
+}
+
 function orderPlan(order, plans) {
   const currentPlan = (plans || []).find((item) => item.id === order.planId);
   const snapshot = order.planSnapshot || {};
@@ -164,7 +176,7 @@ exports.confirmOrder = onCall(async (request) => {
       : (buyer.repeatCreditQueueAt || "");
 
     let referrerSnap = null;
-    if (actualType === "first" && buyer.referrerId) {
+    if (buyer.referrerId) {
       referrerSnap = await tx.get(db.collection("amsystemUsers").doc(buyer.referrerId));
     }
 
@@ -246,7 +258,7 @@ exports.confirmOrder = onCall(async (request) => {
     }
 
     if (actualType === "repeat" && repeatReceiver) {
-      const rate = Number(plan.repeatRate || 0);
+      const rate = planPoolRepeatRate(plan);
       if (rate > 0) {
         const receiverCredits = Math.max(Number(repeatReceiver.repeatCredits || 0) - 1, 0);
         tx.set(repeatReceiver.ref, {
@@ -276,6 +288,26 @@ exports.confirmOrder = onCall(async (request) => {
           amount: repeatRewardAmount,
           releasedAmount: 0,
           releasePlan: createReleasePlan(repeatRewardAmount, paidAt),
+          createdAt: paidAt,
+        });
+      }
+    }
+
+    if (actualType === "repeat" && referrerSnap && referrerSnap.exists) {
+      const referrer = referrerSnap.data();
+      const rate = planDirectRepeatRate(plan);
+      if (isActivePackage(referrer) && rate > 0) {
+        const directRewardAmount = rewardAmount(order, rate);
+        createReward(tx, {
+          userId: buyer.referrerId,
+          sourceUserId: order.userId,
+          orderId: order.id,
+          type: "repeat",
+          rewardMode: "direct",
+          rate,
+          amount: directRewardAmount,
+          releasedAmount: 0,
+          releasePlan: createReleasePlan(directRewardAmount, paidAt),
           createdAt: paidAt,
         });
       }

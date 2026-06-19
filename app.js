@@ -26,7 +26,7 @@ import {
 } from "https://www.gstatic.com/firebasejs/10.12.5/firebase-storage.js";
 
 const STORAGE_KEY = "amsystemFirebaseFallback";
-const APP_VERSION = "20260619-51";
+const APP_VERSION = "20260619-52";
 const PUBLIC_SITE_URL = "https://stunleyhoh001.github.io/simplesystem/";
 const TEST_CHECKLIST_KEY = "amsystemTestChecklist";
 const DEPLOY_CHECKLIST_KEY = "amsystemDeployChecklist";
@@ -54,9 +54,9 @@ const TEST_CHECKLIST = [
   "管理员账号登录后，确认后台指标、待办中心、配套设置可正常显示。",
   "用户 A 登录，填写手机和默认收款资料，确认资料完整提示消失。",
   "用户 A 复制推荐链接或推荐码，用户 B 用另一个 Google 账号打开并绑定推荐人。",
-  "用户 B 提交首充订单，后台确认付款后，B 获得积分和配套，A 获得首充奖励。",
-  "用户 B 再提交复购订单，确认付款后，B 获得复购资格和冷却时间。",
-  "准备一个有复购资格的用户，确认资格池奖励会派发给排队最早且不是买家的人。",
+  "用户 B 提交首充订单，后台确认付款后，B 获得积分和配套，A 获得 20% 首充奖励。",
+  "用户 B 再提交复购订单，确认付款后，B 获得复购资格和冷却时间，A 获得 10% 直推复购奖励。",
+  "准备一个有复购资格的用户，确认资格池奖励会派发给排队最早且不是买家的人，金额为 10%。",
   "到期后测试奖励确认或分期释放，确认只有已释放奖励进入可提现余额。",
   "用户申请提现，后台通过并标记打款，导出订单/奖励/提现/异常报告核对金额。",
 ];
@@ -296,8 +296,8 @@ function createSeedData() {
   const data = {
     currentUserId: "u_1002",
     plans: [
-      { id: "plan_rm180", name: "RM180 启动配套", amount: 180, points: 18000, slots: 10, repeatCredits: 10, repeatCooldownHours: 24, validDays: 30, firstRate: 20, repeatRate: 8 },
-      { id: "plan_rm580", name: "RM580 进阶配套", amount: 580, points: 58000, slots: 35, repeatCredits: 10, repeatCooldownHours: 24, validDays: 60, firstRate: 25, repeatRate: 10 },
+      { id: "plan_rm180", name: "RM180 启动配套", amount: 180, points: 18000, slots: 10, repeatCredits: 10, repeatCooldownHours: 24, validDays: 30, firstRate: 20, directRepeatRate: 10, repeatRate: 10 },
+      { id: "plan_rm580", name: "RM580 进阶配套", amount: 580, points: 58000, slots: 35, repeatCredits: 10, repeatCooldownHours: 24, validDays: 60, firstRate: 20, directRepeatRate: 10, repeatRate: 10 },
     ],
     users: [
       { id: "u_1001", name: "李明", account: "liming@example.com", phone: "", withdrawMethod: "", withdrawAccount: "", inviteCode: "LM1001", referrerId: "", level: "推广用户", points: 18000, slots: 10, repeatCredits: 5, repeatCreditQueueAt: pastDate(7), repeatCooldownUntil: "", packageUntil: futureDate(20), frozen: false },
@@ -802,12 +802,18 @@ function orderConfirmSummaryFromRecords(data, order) {
   ];
   if (buyer.packageUntil) summary.push(`配套有效至 ${new Date(buyer.packageUntil).toLocaleDateString("zh-CN")}`);
   if (order.type === "repeat") {
-    const repeatReward = rewards.find((reward) => reward.type === "repeat");
-    const receiver = repeatReward ? (data.users || []).find((user) => user.id === repeatReward.userId) : null;
+    const directRepeatReward = rewards.find((reward) => reward.type === "repeat" && reward.rewardMode === "direct");
+    const poolRepeatReward = rewards.find((reward) => reward.type === "repeat" && reward.rewardMode === "pool")
+      || rewards.find((reward) => reward.type === "repeat" && !reward.rewardMode);
+    const directReceiver = directRepeatReward ? (data.users || []).find((user) => user.id === directRepeatReward.userId) : null;
+    const poolReceiver = poolRepeatReward ? (data.users || []).find((user) => user.id === poolRepeatReward.userId) : null;
     summary.push(`买家复购资格 +${repeatEarned || 0}，当前 ${buyer.repeatCredits || 0}`);
     if (buyer.repeatCooldownUntil) summary.push(`复购冷却至 ${new Date(buyer.repeatCooldownUntil).toLocaleString("zh-CN")}`);
-    summary.push(repeatReward
-      ? `资格池奖励：${receiver?.name || repeatReward.userId} 获得 ${money(repeatReward.amount)}，扣 1 个资格`
+    summary.push(directRepeatReward
+      ? `复购直推奖励：${directReceiver?.name || directRepeatReward.userId} 获得 ${money(directRepeatReward.amount)}`
+      : "复购直推奖励：未找到现有奖励记录");
+    summary.push(poolRepeatReward
+      ? `资格池奖励：${poolReceiver?.name || poolRepeatReward.userId} 获得 ${money(poolRepeatReward.amount)}，扣 1 个资格`
       : "资格池奖励：未找到现有奖励记录");
   } else {
     const firstReward = rewards.find((reward) => reward.type === "first");
@@ -891,6 +897,14 @@ function planRepeatCooldownHours(plan) {
   return Number(plan.repeatCooldownHours ?? 24);
 }
 
+function planDirectRepeatRate(plan) {
+  return Number(plan?.directRepeatRate ?? 10);
+}
+
+function planPoolRepeatRate(plan) {
+  return Number(plan?.repeatRate ?? 10);
+}
+
 function repeatCooldownRemaining(user) {
   if (!user.repeatCooldownUntil) return 0;
   return Math.max(new Date(user.repeatCooldownUntil).getTime() - Date.now(), 0);
@@ -924,7 +938,8 @@ function planSnapshot(plan) {
     repeatCooldownHours: planRepeatCooldownHours(plan),
     validDays: Number(plan.validDays || 0),
     firstRate: Number(plan.firstRate || 0),
-    repeatRate: Number(plan.repeatRate || 0),
+    directRepeatRate: planDirectRepeatRate(plan),
+    repeatRate: planPoolRepeatRate(plan),
   };
 }
 
@@ -954,6 +969,11 @@ function backfillOrderPlanSnapshots(data = state) {
 }
 
 function prepareLoadedState(data) {
+  data.plans = (data.plans || []).map((plan) => ({
+    ...plan,
+    directRepeatRate: planDirectRepeatRate(plan),
+    repeatRate: planPoolRepeatRate(plan),
+  }));
   backfillOrderPlanSnapshots(data);
   return data;
 }
@@ -965,7 +985,8 @@ function orderPlanSummary(plan) {
     `名额 ${Number(plan.slots || 0)}`,
     `有效 ${Number(plan.validDays || 0)} 天`,
     `首充 ${Number(plan.firstRate || 0)}%`,
-    `复购 ${Number(plan.repeatRate || 0)}%`,
+    `直推复购 ${planDirectRepeatRate(plan)}%`,
+    `资格池 ${planPoolRepeatRate(plan)}%`,
     `资格 ${planRepeatCredits(plan)} 个`,
     `冷却 ${planRepeatCooldownHours(plan)} 小时`,
   ].join(" / ");
@@ -1233,7 +1254,9 @@ function rewardRiskLabels(reward, data = state) {
   if (reward.type === "repeat") {
     if (order.type !== "repeat") issues.push(`复购奖励 ${label} 对应订单不是复购`);
     if (reward.userId === order.userId) issues.push(`复购奖励 ${label} 发给了买家本人`);
-    if (reward.rewardMode !== "pool") issues.push(`复购奖励 ${label} 缺少资格池标记`);
+    if (!["direct", "pool"].includes(reward.rewardMode)) issues.push(`复购奖励 ${label} 缺少复购模式标记`);
+    if (reward.rewardMode === "direct" && buyer?.referrerId && reward.userId !== buyer.referrerId) issues.push(`复购直推奖励 ${label} 没有发给买家的推荐人`);
+    if (reward.rewardMode === "direct" && !buyer?.referrerId) issues.push(`复购直推奖励 ${label} 对应买家没有推荐人`);
     if (Array.isArray(reward.releasePlan)) {
       const released = reward.releasePlan.reduce((sum, part) => sum + (part.released ? Number(part.amount || 0) : 0), 0);
       const planned = reward.releasePlan.reduce((sum, part) => sum + Number(part.amount || 0), 0);
@@ -1365,17 +1388,21 @@ function applyPaidOrder(data, order, paidAt = new Date().toISOString()) {
   if (order.type === "repeat") {
     user.repeatCooldownUntil = addHours(paidAt, planRepeatCooldownHours(plan));
     const earnedCredits = grantRepeatCredits(data, user, plan, paidAt);
-    const repeatReward = createRepeatPoolReward(data, order, user, plan, paidAt);
+    const directReward = createRepeatDirectReward(data, order, user, plan, paidAt);
+    const poolReward = createRepeatPoolReward(data, order, user, plan, paidAt);
     summary.push(`买家复购资格 +${earnedCredits}，当前 ${user.repeatCredits}`);
     summary.push(`复购冷却至 ${new Date(user.repeatCooldownUntil).toLocaleString("zh-CN")}`);
-    summary.push(repeatReward
-      ? `资格池奖励：${repeatReward.receiverName} 获得 ${money(repeatReward.amount)}，扣 1 个资格`
+    summary.push(directReward
+      ? `复购直推奖励：${directReward.receiverName} 获得 ${money(directReward.amount)}`
+      : "复购直推奖励：无推荐人、推荐人未开通有效配套、冻结或比例为 0，未生成奖励");
+    summary.push(poolReward
+      ? `资格池奖励：${poolReward.receiverName} 获得 ${money(poolReward.amount)}，扣 1 个资格`
       : "资格池奖励：暂无接收人或比例为 0，未生成奖励");
   } else {
     const firstReward = createFirstReward(data, order, user, plan, paidAt);
     summary.push(firstReward
       ? `首充奖励：${firstReward.receiverName} 获得 ${money(firstReward.amount)}`
-      : "首充奖励：无推荐人、推荐人冻结、名额不足或比例为 0，未生成奖励");
+      : "首充奖励：无推荐人、推荐人冻结或比例为 0，未生成奖励");
   }
   order.confirmSummary = summary.join(" / ");
 }
@@ -1440,7 +1467,6 @@ function createFirstReward(data, order, buyer, plan, paidAt = order.createdAt) {
   if (!buyer.referrerId) return null;
   const referrer = data.users.find((item) => item.id === buyer.referrerId);
   if (!referrer || referrer.frozen) return null;
-  if (directReferralCount(referrer.id, data) > (referrer.slots || 0)) return null;
   const rate = Number(plan.firstRate || 0);
   if (rate <= 0) return null;
   const amount = +(order.amount * (rate / 100)).toFixed(2);
@@ -1460,9 +1486,35 @@ function createFirstReward(data, order, buyer, plan, paidAt = order.createdAt) {
   return { reward, receiverName: referrer.name || referrer.account || referrer.id, amount };
 }
 
+function createRepeatDirectReward(data, order, buyer, plan, paidAt = order.createdAt) {
+  if (!buyer.referrerId) return null;
+  const referrer = data.users.find((item) => item.id === buyer.referrerId);
+  if (!referrer || referrer.frozen || !isActivePackage(referrer)) return null;
+  const rate = planDirectRepeatRate(plan);
+  if (rate <= 0) return null;
+  const amount = +(order.amount * (rate / 100)).toFixed(2);
+  const reward = {
+    id: id("rew"),
+    userId: referrer.id,
+    sourceUserId: buyer.id,
+    orderId: order.id,
+    type: "repeat",
+    rewardMode: "direct",
+    rate,
+    amount,
+    status: "pending",
+    releasedAmount: 0,
+    releasePlan: createReleasePlan(amount, paidAt),
+    confirmAfter: addDays(paidAt, CONFIRM_DAYS),
+    createdAt: paidAt,
+  };
+  data.rewards.push(reward);
+  return { reward, receiverName: referrer.name || referrer.account || referrer.id, amount };
+}
+
 function createRepeatPoolReward(data, order, buyer, plan, paidAt = order.createdAt) {
   const receiver = nextRepeatReceiver(data, buyer.id);
-  const rate = Number(plan.repeatRate || 0);
+  const rate = planPoolRepeatRate(plan);
   if (!receiver || rate <= 0) return null;
   receiver.repeatCredits = Math.max(Number(receiver.repeatCredits || 0) - 1, 0);
   if (receiver.repeatCredits <= 0) receiver.repeatCreditQueueAt = "";
@@ -1525,6 +1577,7 @@ function recalculateOrderRewards(data, order) {
   const paidAt = order.paidAt || order.createdAt || new Date().toISOString();
   if (order.type === "repeat") {
     grantRepeatCredits(data, buyer, plan, paidAt);
+    createRepeatDirectReward(data, order, buyer, plan, paidAt);
     createRepeatPoolReward(data, order, buyer, plan, paidAt);
   } else {
     createFirstReward(data, order, buyer, plan, paidAt);
@@ -1557,11 +1610,16 @@ function orderConfirmPreview(order) {
   }
   if (previewType === "repeat") {
     const receiver = nextRepeatReceiver(state, user.id);
-    const reward = +(order.amount * (Number(plan.repeatRate || 0) / 100)).toFixed(2);
+    const referrer = findUser(user.referrerId);
+    const directReward = +(order.amount * (planDirectRepeatRate(plan) / 100)).toFixed(2);
+    const poolReward = +(order.amount * (planPoolRepeatRate(plan) / 100)).toFixed(2);
     lines.push(`复购资格：买家 +${planRepeatCredits(plan)} 个`);
     lines.push(`复购冷却：${planRepeatCooldownHours(plan)} 小时`);
+    lines.push(referrer && isActivePackage(referrer)
+      ? `复购直推奖励：${referrer.name} 预计获得 ${money(directReward)}，分 ${REPEAT_RELEASE_DAYS.length} 期释放`
+      : "复购直推奖励：没有有效推荐人，不产生直推复购奖励");
     lines.push(receiver
-      ? `资格池接收人：${receiver.name} / 当前资格 ${receiver.repeatCredits} 个，将扣 1 个，奖励 ${money(reward)} 分 ${REPEAT_RELEASE_DAYS.length} 期释放`
+      ? `资格池接收人：${receiver.name} / 当前资格 ${receiver.repeatCredits} 个，将扣 1 个，奖励 ${money(poolReward)} 分 ${REPEAT_RELEASE_DAYS.length} 期释放`
       : "资格池接收人：暂无，当前复购只给买家增加资格，不产生资格池奖励");
   } else {
     const referrer = findUser(user.referrerId);
@@ -1586,6 +1644,7 @@ function orderDetailText(order) {
     })
     : ["- 暂无奖励记录"];
   const receiver = resolvedType === "repeat" ? nextRepeatReceiver(state, order.userId) : null;
+  const referrer = resolvedType === "repeat" ? findUser(user.referrerId) : null;
   return [
     `订单：${order.id}`,
     `用户：${user.name} / ${user.account}`,
@@ -1604,7 +1663,10 @@ function orderDetailText(order) {
     `取消时间：${order.cancelledAt ? new Date(order.cancelledAt).toLocaleString("zh-CN") : "-"}`,
     resolvedType === "first"
       ? `首充奖励对象：${user.referrerId ? (findUser(user.referrerId)?.name || user.referrerId) : "无推荐人"}`
-      : `资格池接收人：${receiver ? `${receiver.name}（资格 ${receiver.repeatCredits}）` : "暂无"}`,
+      : `复购直推对象：${referrer ? `${referrer.name}（${isActivePackage(referrer) ? "配套有效" : "配套无效"}）` : "无推荐人"}`,
+    resolvedType === "repeat"
+      ? `资格池接收人：${receiver ? `${receiver.name}（资格 ${receiver.repeatCredits}）` : "暂无"}`
+      : "",
     "现有奖励记录：",
     ...rewardLines,
   ].join("\n");
@@ -1698,7 +1760,7 @@ function userDetailText(user) {
     `充值积分：${points(user.points)}`,
     `可提现奖励：${money(breakdown.available)}`,
     `复购资格：${points(user.repeatCredits || 0)}`,
-    `推荐名额：${referrals} / ${user.slots || 0}`,
+    `直接推荐：${referrals} / 开放`,
     "",
     "业务统计：",
     `订单：${orders.length} 笔，其中已支付 ${paidOrders.length} 笔，累计 ${money(paidOrders.reduce((sum, order) => sum + Number(order.amount || 0), 0))}`,
@@ -1730,7 +1792,8 @@ function labelStatus(status) {
 
 function rewardTypeText(reward) {
   if (reward.type === "first") return "首充奖励";
-  if (reward.rewardMode === "pool") return "复购资格奖励";
+  if (reward.rewardMode === "direct") return "复购直推奖励";
+  if (reward.rewardMode === "pool") return "复购资格池奖励";
   return "复购奖励";
 }
 
@@ -1929,7 +1992,7 @@ function renderMember() {
   document.querySelector("#memberConfirmed").textContent = money(confirmedAvailable(user.id));
   document.querySelector("#memberPoints").closest("span").title = "充值积分不可提现";
   document.querySelector("#memberConfirmed").closest("span").title = "首充推荐奖励和复购奖励可提现";
-  document.querySelector("#memberSlots").textContent = `${Math.max((user.slots || 0) - used, 0)} / ${user.slots || 0}`;
+  document.querySelector("#memberSlots").textContent = `${used} / 开放`;
   document.querySelector("#memberRepeatCredits").textContent = points(user.repeatCredits || 0);
   document.querySelector("#memberPlanStatus").textContent = statusLabel;
   document.querySelector("#memberPlanStatus").className = `tag ${statusClass}`;
@@ -2141,9 +2204,9 @@ function renderMemberPlans(user) {
     <article class="plan-card">
       <strong>${plan.name} · ${money(plan.amount)}</strong>
       <span>发放积分：${points(plan.points)}</span>
-      <span>推荐权限：${plan.slots} 人 / 有效期：${plan.validDays} 天</span>
-      <span>复购后获得资格：${planRepeatCredits(plan)} 个 / 冷却：${planRepeatCooldownHours(plan)} 小时 / 资格复购奖励：${plan.repeatRate}%</span>
-      <span>首充推荐奖励：${plan.firstRate}%</span>
+      <span>直接推荐：开放 / 有效期：${plan.validDays} 天</span>
+      <span>复购后获得资格：${planRepeatCredits(plan)} 个 / 冷却：${planRepeatCooldownHours(plan)} 小时</span>
+      <span>奖励：首充 ${plan.firstRate}% / 复购直推 ${planDirectRepeatRate(plan)}% / 资格池 ${planPoolRepeatRate(plan)}%</span>
       <button class="button primary" data-buy-plan="${plan.id}" data-buy-type="${nextType}">申请充值配套</button>
     </article>
   `).join("");
@@ -2205,8 +2268,9 @@ function renderRewardRules() {
     <article class="rule-card">
       <strong>${plan.name}</strong>
       <span>首充奖励：下线首次购买 ${money(plan.amount)}，推荐人获得 ${money(plan.amount * plan.firstRate / 100)}。</span>
-      <span>复购资格：用户复购后获得 ${planRepeatCredits(plan)} 个复购奖励资格。</span>
-      <span>资格奖励：后续复购订单会自动派发给资格池用户，每次资格奖励约 ${money(plan.amount * plan.repeatRate / 100)}，并扣 1 个资格。</span>
+      <span>复购直推：下线复购时，原推荐人获得 ${money(plan.amount * planDirectRepeatRate(plan) / 100)}，需推荐人配套有效。</span>
+      <span>复购资格：用户复购后获得 ${planRepeatCredits(plan)} 个资格，可接收后续资格池奖励。</span>
+      <span>资格池奖励：后续复购订单会自动派发给资格池用户，每次约 ${money(plan.amount * planPoolRepeatRate(plan) / 100)}，并扣 1 个资格。</span>
       <span>奖励先待确认，${CONFIRM_DAYS} 天后由后台确认。</span>
     </article>
   `).join("");
@@ -2501,6 +2565,7 @@ function planFromForm(form) {
     repeatCooldownHours: Number(form.get("repeatCooldownHours") || 24),
     validDays: Number(form.get("validDays")),
     firstRate: Number(form.get("firstRate")),
+    directRepeatRate: Number(form.get("directRepeatRate") || 10),
     repeatRate: Number(form.get("repeatRate")),
   };
 }
@@ -2517,7 +2582,8 @@ function fillPlanForm(plan) {
   form.querySelector("[name='repeatCooldownHours']").value = planRepeatCooldownHours(plan);
   form.querySelector("[name='validDays']").value = plan.validDays || "";
   form.querySelector("[name='firstRate']").value = plan.firstRate || 0;
-  form.querySelector("[name='repeatRate']").value = plan.repeatRate || 0;
+  form.querySelector("[name='directRepeatRate']").value = planDirectRepeatRate(plan);
+  form.querySelector("[name='repeatRate']").value = planPoolRepeatRate(plan);
   const button = form.querySelector("button[type='submit']");
   if (button) button.textContent = "保存配套";
   const cancelButton = form.querySelector("#cancelPlanEditBtn");
@@ -2539,8 +2605,8 @@ function renderAdminPlans() {
   document.querySelector("#adminPlanList").innerHTML = state.plans.map((plan) => `
     <article class="plan-card">
       <strong>${plan.name} · ${money(plan.amount)}</strong>
-      <span>积分 ${points(plan.points)} / 推荐名额 ${plan.slots} / 复购资格 ${planRepeatCredits(plan)} 个</span>
-      <span>冷却 ${planRepeatCooldownHours(plan)} 小时 / 有效期 ${plan.validDays} 天 / 首充 ${plan.firstRate}% / 资格复购 ${plan.repeatRate}%</span>
+      <span>积分 ${points(plan.points)} / 直接推荐开放 / 复购资格 ${planRepeatCredits(plan)} 个</span>
+      <span>冷却 ${planRepeatCooldownHours(plan)} 小时 / 有效期 ${plan.validDays} 天 / 首充 ${plan.firstRate}% / 复购直推 ${planDirectRepeatRate(plan)}% / 资格池 ${planPoolRepeatRate(plan)}%</span>
       <div class="actions">
         <button class="link" type="button" data-edit-plan="${plan.id}">编辑</button>
         ${planUsed(plan.id) ? `<span class="muted-line">已有订单，不能删除</span>` : `<button class="link danger-link" type="button" data-delete-plan="${plan.id}">删除</button>`}
@@ -2561,7 +2627,7 @@ function renderAdminUsers() {
     const payoutRisk = sharedUsers.length ? `<span class="risk-line">共享账号 ${sharedUsers.length}</span>` : "-";
     const missingFields = profileMissingFields(user);
     const profileRisk = missingFields.length ? `<span class="profile-line">缺：${missingFields.join("、")}</span>` : "";
-    return `<tr><td>${user.name}${profileRisk}</td><td>${user.account}</td><td>${user.phone || "-"}</td><td>${user.inviteCode}</td><td>${referrer?.name || "无"}</td><td>${points(user.points)}</td><td><span class="tag ${statusClass}">${statusLabel}</span></td><td>${directReferralCount(user.id)} / ${user.slots || 0}</td><td>${points(user.repeatCredits || 0)}</td><td>${payoutRisk}</td><td><span class="tag ${user.frozen ? "frozen" : "active"}">${user.frozen ? "已冻结" : "正常"}</span></td><td><button class="link" data-user-detail="${user.id}">详情</button><button class="link" data-export-user-records="${user.id}">导出</button><button class="link" data-freeze-user="${user.id}">${user.frozen ? "解冻" : "冻结"}</button></td></tr>`;
+    return `<tr><td>${user.name}${profileRisk}</td><td>${user.account}</td><td>${user.phone || "-"}</td><td>${user.inviteCode}</td><td>${referrer?.name || "无"}</td><td>${points(user.points)}</td><td><span class="tag ${statusClass}">${statusLabel}</span></td><td>${directReferralCount(user.id)} / 开放</td><td>${points(user.repeatCredits || 0)}</td><td>${payoutRisk}</td><td><span class="tag ${user.frozen ? "frozen" : "active"}">${user.frozen ? "已冻结" : "正常"}</span></td><td><button class="link" data-user-detail="${user.id}">详情</button><button class="link" data-export-user-records="${user.id}">导出</button><button class="link" data-freeze-user="${user.id}">${user.frozen ? "解冻" : "冻结"}</button></td></tr>`;
   }).join("") || `<tr><td colspan="12">没有符合条件的用户</td></tr>`;
 }
 
@@ -2695,7 +2761,7 @@ function renderAdminRewards() {
     const canConfirm = ["pending", "releasing"].includes(reward.status) && new Date(reward.confirmAfter) <= new Date();
     const detailAction = `<button class="link" data-reward-detail="${reward.id}">详情</button>`;
     const riskText = rewardRiskLabels(reward).map((label) => `<span class="risk-line">${label}</span>`).join("");
-    return `<tr><td>${user?.name || "-"}</td><td>${sourceUser?.name || "-"}</td><td>${reward.orderId}</td><td>${reward.type === "first" ? "首充" : "复购"}</td><td>${rewardAmountText(reward)}${reward.reviewNote ? `<span class="muted-line">备注：${reward.reviewNote}</span>` : ""}${riskText}</td><td><span class="tag ${reward.status}">${labelStatus(reward.status)}</span></td><td>${rewardNextDateText(reward)}</td><td class="actions">${detailAction}${canConfirm ? `<button class="link" data-confirm-reward="${reward.id}">确认</button>` : ""}${["pending", "releasing"].includes(reward.status) ? `<button class="link" data-cancel-reward="${reward.id}">取消</button><button class="link" data-freeze-reward="${reward.id}">冻结</button>` : ""}</td></tr>`;
+    return `<tr><td>${user?.name || "-"}</td><td>${sourceUser?.name || "-"}</td><td>${reward.orderId}</td><td>${rewardTypeText(reward)}</td><td>${rewardAmountText(reward)}${reward.reviewNote ? `<span class="muted-line">备注：${reward.reviewNote}</span>` : ""}${riskText}</td><td><span class="tag ${reward.status}">${labelStatus(reward.status)}</span></td><td>${rewardNextDateText(reward)}</td><td class="actions">${detailAction}${canConfirm ? `<button class="link" data-confirm-reward="${reward.id}">确认</button>` : ""}${["pending", "releasing"].includes(reward.status) ? `<button class="link" data-cancel-reward="${reward.id}">取消</button><button class="link" data-freeze-reward="${reward.id}">冻结</button>` : ""}</td></tr>`;
   }).join("");
   document.querySelector("#adminRewardTable").innerHTML = rows || `<tr><td colspan="8">没有符合条件的奖励</td></tr>`;
 }
@@ -2717,7 +2783,8 @@ function readinessChecks() {
     && Number(plan.points || 0) > 0
     && Number(plan.validDays || 0) > 0
     && Number(plan.firstRate || 0) >= 0
-    && Number(plan.repeatRate || 0) >= 0
+    && planDirectRepeatRate(plan) >= 0
+    && planPoolRepeatRate(plan) >= 0
   );
   const users = state.users || [];
   const paidOrders = (state.orders || []).filter((order) => order.status === "paid");
@@ -2792,7 +2859,7 @@ function readinessChecks() {
       label: "奖励发放规则",
       detail: rewardIssues.length
         ? `${rewardIssues.length} 项奖励异常：${rewardIssues.slice(0, 2).join("；")}${rewardIssues.length > 2 ? "；..." : ""}`
-        : "首充奖励、复购资格池奖励、金额和分期释放正常",
+        : "首充奖励、复购直推奖励、复购资格池奖励、金额和分期释放正常",
     },
     {
       ok: integrityIssues.length === 0,
@@ -2914,7 +2981,7 @@ function renderAdminRiskRules() {
     {
       title: "复购奖励分期",
       rows: [
-        `复购资格奖励分 ${REPEAT_RELEASE_DAYS.length} 期释放。`,
+        `复购直推奖励和资格池奖励分 ${REPEAT_RELEASE_DAYS.length} 期释放。`,
         `释放日：第 ${REPEAT_RELEASE_DAYS.join(" / 第 ")} 天。`,
         "只有已释放金额会计入用户可提现余额。",
       ],
@@ -2937,7 +3004,7 @@ function renderAdminRiskRules() {
         ].filter(Boolean)
         : [
           `<b class="check-ok">奖励发放规则正常</b>`,
-          "首充奖励、复购资格池奖励、金额和分期释放未发现异常。",
+          "首充奖励、复购直推奖励、复购资格池奖励、金额和分期释放未发现异常。",
         ],
     },
     {
@@ -3488,7 +3555,10 @@ function filteredRewards() {
     const matchesStatus = statusFilter === "all"
       || reward.status === statusFilter
       || (statusFilter === "due" && isDue);
-    const matchesType = typeFilter === "all" || reward.type === typeFilter;
+    const matchesType = typeFilter === "all"
+      || reward.type === typeFilter
+      || (typeFilter === "repeatDirect" && reward.type === "repeat" && reward.rewardMode === "direct")
+      || (typeFilter === "repeatPool" && reward.type === "repeat" && reward.rewardMode === "pool");
     const matchesRisk = riskFilter === "all"
       || (riskFilter === "risk" && hasRisk)
       || (riskFilter === "normal" && !hasRisk);
@@ -3990,7 +4060,7 @@ document.querySelector("#exportUsersBtn")?.addEventListener("click", () => {
   if (!requireAdmin()) return;
   downloadCsv(
     `amsystem-users-${exportStamp()}.csv`,
-    ["用户ID", "姓名", "账号", "手机", "邀请码", "推荐人", "积分", "推荐名额", "已用名额", "复购资格", "默认收款方式", "默认收款账号", "资料状态", "缺失资料", "共享账号数量", "共享账号用户", "配套状态", "账号状态"],
+    ["用户ID", "姓名", "账号", "手机", "邀请码", "推荐人", "积分", "推荐名额记录", "直接推荐数", "复购资格", "默认收款方式", "默认收款账号", "资料状态", "缺失资料", "共享账号数量", "共享账号用户", "配套状态", "账号状态"],
     filteredUsers().map((user) => {
       const referrer = findUser(user.referrerId);
       const [, statusLabel] = packageStatus(user);
@@ -4075,7 +4145,7 @@ document.querySelector("#exportPlansBtn")?.addEventListener("click", async () =>
   if (!requireAdmin()) return;
   downloadCsv(
     `amsystem-plans-${exportStamp()}.csv`,
-    ["配套ID", "配套名称", "金额", "发放积分", "推荐名额", "复购资格", "复购冷却小时", "有效期天数", "首充奖励%", "资格复购奖励%", "是否已有订单使用"],
+    ["配套ID", "配套名称", "金额", "发放积分", "推荐名额", "复购资格", "复购冷却小时", "有效期天数", "首充奖励%", "直推复购奖励%", "资格池复购奖励%", "是否已有订单使用"],
     (state.plans || []).map((plan) => [
       plan.id,
       plan.name,
@@ -4086,7 +4156,8 @@ document.querySelector("#exportPlansBtn")?.addEventListener("click", async () =>
       planRepeatCooldownHours(plan),
       plan.validDays,
       plan.firstRate,
-      plan.repeatRate,
+      planDirectRepeatRate(plan),
+      planPoolRepeatRate(plan),
       planUsed(plan.id) ? "是" : "否",
     ])
   );
@@ -4125,7 +4196,7 @@ document.querySelector("#exportOrdersBtn")?.addEventListener("click", () => {
   if (!requireAdmin()) return;
   downloadCsv(
     `amsystem-orders-${exportStamp()}.csv`,
-    ["订单号", "用户", "配套", "类型", "金额", "锁定积分", "锁定推荐名额", "锁定有效天数", "锁定首充比例", "锁定复购比例", "锁定复购资格", "锁定冷却小时", "付款方式", "付款参考号", "凭证状态", "风险提示", "状态", "处理备注", "处理结果", "申请时间", "确认时间", "取消时间"],
+    ["订单号", "用户", "配套", "类型", "金额", "锁定积分", "锁定推荐名额记录", "锁定有效天数", "锁定首充比例", "锁定直推复购比例", "锁定资格池复购比例", "锁定复购资格", "锁定冷却小时", "付款方式", "付款参考号", "凭证状态", "风险提示", "状态", "处理备注", "处理结果", "申请时间", "确认时间", "取消时间"],
     filteredOrders().map((order) => {
       const user = findUser(order.userId);
       const plan = orderPlan(order);
@@ -4139,7 +4210,8 @@ document.querySelector("#exportOrdersBtn")?.addEventListener("click", () => {
         plan?.slots || 0,
         plan?.validDays || 0,
         plan?.firstRate || 0,
-        plan?.repeatRate || 0,
+        plan ? planDirectRepeatRate(plan) : 0,
+        plan ? planPoolRepeatRate(plan) : 0,
         plan ? planRepeatCredits(plan) : 0,
         plan ? planRepeatCooldownHours(plan) : 0,
         paymentMethodText(order.paymentMethod),
