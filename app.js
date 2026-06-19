@@ -26,7 +26,7 @@ import {
 } from "https://www.gstatic.com/firebasejs/10.12.5/firebase-storage.js";
 
 const STORAGE_KEY = "amsystemFirebaseFallback";
-const APP_VERSION = "20260619-50";
+const APP_VERSION = "20260619-51";
 const PUBLIC_SITE_URL = "https://stunleyhoh001.github.io/simplesystem/";
 const TEST_CHECKLIST_KEY = "amsystemTestChecklist";
 const DEPLOY_CHECKLIST_KEY = "amsystemDeployChecklist";
