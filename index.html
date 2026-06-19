@@ -4,7 +4,7 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>简单的联盟营销系统</title>
-    <link rel="stylesheet" href="./styles.css?v=20260619-57" />
+    <link rel="stylesheet" href="./styles.css?v=20260619-58" />
   </head>
   <body>
     <header class="app-header">
@@ -214,9 +214,9 @@
               <label>推荐名额（开放后仅记录）<input name="slots" type="number" min="0" step="1" required /></label>
               <label>复购奖励资格<input name="repeatCredits" type="number" min="0" step="1" value="10" required /></label>
               <label>有效期天数<input name="validDays" type="number" min="1" step="1" required /></label>
-              <label>首充奖励 %<input name="firstRate" type="number" min="0" max="100" step="0.1" required /></label>
-              <label>直推复购奖励 %<input name="directRepeatRate" type="number" min="0" max="100" step="0.1" value="10" required /></label>
-              <label>资格池复购奖励 %<input name="repeatRate" type="number" min="0" max="100" step="0.1" required /></label>
+              <label>推荐奖励 %<input name="firstRate" type="number" min="0" max="100" step="0.1" required /></label>
+              <label>下线复购奖励 %<input name="directRepeatRate" type="number" min="0" max="100" step="0.1" value="10" required /></label>
+              <label>奖励池奖励 %<input name="repeatRate" type="number" min="0" max="100" step="0.1" required /></label>
               <button class="button primary" type="submit">新增配套</button>
             </form>
             <div id="adminPlanList" class="list"></div>
@@ -391,10 +391,10 @@
                   <label>奖励类型
                     <select id="rewardTypeFilter">
                       <option value="all">全部类型</option>
-                      <option value="first">首充奖励</option>
+                      <option value="first">推荐奖励</option>
                       <option value="repeat">全部复购奖励</option>
-                      <option value="repeatDirect">复购直推奖励</option>
-                      <option value="repeatPool">复购资格池奖励</option>
+                      <option value="repeatDirect">下线复购奖励</option>
+                      <option value="repeatPool">奖励池奖励</option>
                     </select>
                   </label>
                   <label>风控
@@ -502,7 +502,8 @@
     </main>
 
     <div id="toast" class="toast" role="status" aria-live="polite"></div>
-    <script type="module" src="./app.js?v=20260619-57"></script>
+    <script type="module" src="./app.js?v=20260619-58"></script>
   </body>
 </html>
+
 

@@ -26,7 +26,7 @@ import {
 } from "https://www.gstatic.com/firebasejs/10.12.5/firebase-storage.js";
 
 const STORAGE_KEY = "amsystemFirebaseFallback";
-const APP_VERSION = "20260619-57";
+const APP_VERSION = "20260619-58";
 const PUBLIC_SITE_URL = "https://stunleyhoh001.github.io/simplesystem/";
 const TEST_CHECKLIST_KEY = "amsystemTestChecklist";
 const DEPLOY_CHECKLIST_KEY = "amsystemDeployChecklist";
@@ -54,9 +54,9 @@ const TEST_CHECKLIST = [
   "管理员账号登录后，确认后台指标、待办中心、配套设置可正常显示。",
   "用户 A 登录，填写手机和默认收款资料，确认资料完整提示消失。",
   "用户 A 复制推荐链接或推荐码，用户 B 用另一个 Google 账号打开并绑定推荐人。",
-  "用户 B 提交首充订单，后台确认付款后，B 获得积分和配套，A 获得 20% 首充奖励。",
-  "用户 B 再提交复购订单，确认付款后，B 获得复购资格和冷却时间，A 获得 10% 直推复购奖励。",
-  "准备一个有复购资格的用户，确认资格池奖励会派发给排队最早且不是买家的人，金额为 10%。",
+  "用户 B 提交首充订单，后台确认付款后，B 获得积分和配套，A 获得 20% 推荐奖励。",
+  "用户 B 再提交复购订单，确认付款后，B 获得复购资格和冷却时间，A 获得 10% 下线复购奖励。",
+  "准备一个有复购资格的用户，确认奖励池奖励会派发给排队最早且不是买家的人，金额为 10%。",
   "到期后测试奖励确认或分期释放，确认只有已释放奖励进入可提现余额。",
   "用户申请提现，后台通过并标记打款，导出订单/奖励/提现/异常报告核对金额。",
 ];
@@ -836,17 +836,17 @@ function orderConfirmSummaryFromRecords(data, order) {
     summary.push(`买家复购资格 +${repeatEarned || 0}，当前 ${buyer.repeatCredits || 0}`);
     if (buyer.repeatCooldownUntil) summary.push(`复购冷却至 ${new Date(buyer.repeatCooldownUntil).toLocaleString("zh-CN")}`);
     summary.push(directRepeatReward
-      ? `复购直推奖励：${directReceiver?.name || directRepeatReward.userId} 获得 ${money(directRepeatReward.amount)}`
-      : "复购直推奖励：未找到现有奖励记录");
+      ? `下线复购奖励：${directReceiver?.name || directRepeatReward.userId} 获得 ${money(directRepeatReward.amount)}`
+      : "下线复购奖励：未找到现有奖励记录");
     summary.push(poolRepeatReward
-      ? `资格池奖励：${poolReceiver?.name || poolRepeatReward.userId} 获得 ${money(poolRepeatReward.amount)}，扣 1 个资格`
-      : "资格池奖励：未找到现有奖励记录");
+      ? `奖励池奖励：${poolReceiver?.name || poolRepeatReward.userId} 获得 ${money(poolRepeatReward.amount)}，扣 1 个资格`
+      : "奖励池奖励：未找到现有奖励记录");
   } else {
     const firstReward = rewards.find((reward) => reward.type === "first");
     const receiver = firstReward ? (data.users || []).find((user) => user.id === firstReward.userId) : null;
     summary.push(firstReward
-      ? `首充奖励：${receiver?.name || firstReward.userId} 获得 ${money(firstReward.amount)}`
-      : "首充奖励：未找到现有奖励记录");
+      ? `推荐奖励：${receiver?.name || firstReward.userId} 获得 ${money(firstReward.amount)}`
+      : "推荐奖励：未找到现有奖励记录");
   }
   return summary.join(" / ");
 }
@@ -1011,9 +1011,9 @@ function orderPlanSummary(plan) {
     `积分 ${points(plan.points)}`,
     `名额 ${Number(plan.slots || 0)}`,
     `有效 ${Number(plan.validDays || 0)} 天`,
-    `首充 ${Number(plan.firstRate || 0)}%`,
-    `直推复购 ${planDirectRepeatRate(plan)}%`,
-    `资格池 ${planPoolRepeatRate(plan)}%`,
+    `推荐奖励 ${Number(plan.firstRate || 0)}%`,
+    `下线复购 ${planDirectRepeatRate(plan)}%`,
+    `奖励池 ${planPoolRepeatRate(plan)}%`,
     `资格 ${planRepeatCredits(plan)} 个`,
     `冷却 ${planRepeatCooldownHours(plan)} 小时`,
   ].join(" / ");
@@ -1123,7 +1123,7 @@ function withdrawEligibility(user) {
 }
 
 function withdrawRuleText(available) {
-  return `规则：充值积分不可提现；只有已确认/已释放的首充推荐奖励和复购奖励可提现。提现申请冷却 ${WITHDRAW_COOLDOWN_HOURS} 小时。当前可提现奖励 ${money(available)}。`;
+  return `规则：充值积分不可提现；只有已确认/已释放的推荐奖励和复购奖励可提现。提现申请冷却 ${WITHDRAW_COOLDOWN_HOURS} 小时。当前可提现奖励 ${money(available)}。`;
 }
 
 function durationText(ms) {
@@ -1299,16 +1299,16 @@ function rewardRiskLabels(reward, data = state) {
     issues.push(`奖励 ${label} 金额异常：记录 ${money(reward.amount)}，应为 ${money(expectedAmount)}`);
   }
   if (reward.type === "first") {
-    if (order.type !== "first") issues.push(`首充奖励 ${label} 对应订单不是首充`);
-    if (buyer?.referrerId && reward.userId !== buyer.referrerId) issues.push(`首充奖励 ${label} 没有发给订单买家的推荐人`);
-    if (!buyer?.referrerId) issues.push(`首充奖励 ${label} 对应买家没有推荐人`);
+    if (order.type !== "first") issues.push(`推荐奖励 ${label} 对应订单不是首充`);
+    if (buyer?.referrerId && reward.userId !== buyer.referrerId) issues.push(`推荐奖励 ${label} 没有发给订单买家的推荐人`);
+    if (!buyer?.referrerId) issues.push(`推荐奖励 ${label} 对应买家没有推荐人`);
   }
   if (reward.type === "repeat") {
     if (order.type !== "repeat") issues.push(`复购奖励 ${label} 对应订单不是复购`);
     if (reward.userId === order.userId) issues.push(`复购奖励 ${label} 发给了买家本人`);
     if (!["direct", "pool"].includes(reward.rewardMode)) issues.push(`复购奖励 ${label} 缺少复购模式标记`);
-    if (reward.rewardMode === "direct" && buyer?.referrerId && reward.userId !== buyer.referrerId) issues.push(`复购直推奖励 ${label} 没有发给买家的推荐人`);
-    if (reward.rewardMode === "direct" && !buyer?.referrerId) issues.push(`复购直推奖励 ${label} 对应买家没有推荐人`);
+    if (reward.rewardMode === "direct" && buyer?.referrerId && reward.userId !== buyer.referrerId) issues.push(`下线复购奖励 ${label} 没有发给买家的推荐人`);
+    if (reward.rewardMode === "direct" && !buyer?.referrerId) issues.push(`下线复购奖励 ${label} 对应买家没有推荐人`);
     if (Array.isArray(reward.releasePlan)) {
       const released = reward.releasePlan.reduce((sum, part) => sum + (part.released ? Number(part.amount || 0) : 0), 0);
       const planned = reward.releasePlan.reduce((sum, part) => sum + Number(part.amount || 0), 0);
@@ -1445,16 +1445,16 @@ function applyPaidOrder(data, order, paidAt = new Date().toISOString()) {
     summary.push(`买家复购资格 +${earnedCredits}，当前 ${user.repeatCredits}`);
     summary.push(`复购冷却至 ${new Date(user.repeatCooldownUntil).toLocaleString("zh-CN")}`);
     summary.push(directReward
-      ? `复购直推奖励：${directReward.receiverName} 获得 ${money(directReward.amount)}`
-      : "复购直推奖励：无推荐人、推荐人未开通有效配套、冻结或比例为 0，未生成奖励");
+      ? `下线复购奖励：${directReward.receiverName} 获得 ${money(directReward.amount)}`
+      : "下线复购奖励：无推荐人、推荐人未开通有效配套、冻结或比例为 0，未生成奖励");
     summary.push(poolReward
-      ? `资格池奖励：${poolReward.receiverName} 获得 ${money(poolReward.amount)}，扣 1 个资格`
-      : "资格池奖励：暂无接收人或比例为 0，未生成奖励");
+      ? `奖励池奖励：${poolReward.receiverName} 获得 ${money(poolReward.amount)}，扣 1 个资格`
+      : "奖励池奖励：暂无接收人或比例为 0，未生成奖励");
   } else {
     const firstReward = createFirstReward(data, order, user, plan, paidAt);
     summary.push(firstReward
-      ? `首充奖励：${firstReward.receiverName} 获得 ${money(firstReward.amount)}`
-      : "首充奖励：无推荐人、推荐人冻结或比例为 0，未生成奖励");
+      ? `推荐奖励：${firstReward.receiverName} 获得 ${money(firstReward.amount)}`
+      : "推荐奖励：无推荐人、推荐人冻结或比例为 0，未生成奖励");
   }
   order.confirmSummary = summary.join(" / ");
 }
@@ -1668,15 +1668,15 @@ function orderConfirmPreview(order) {
     lines.push(`复购资格：买家 +${planRepeatCredits(plan)} 个`);
     lines.push(`复购冷却：${planRepeatCooldownHours(plan)} 小时`);
     lines.push(referrer && isActivePackage(referrer)
-      ? `复购直推奖励：${referrer.name} 预计获得 ${money(directReward)}，分 ${REPEAT_RELEASE_DAYS.length} 期释放`
-      : "复购直推奖励：没有有效推荐人，不产生直推复购奖励");
+      ? `下线复购奖励：${referrer.name} 预计获得 ${money(directReward)}，分 ${REPEAT_RELEASE_DAYS.length} 期释放`
+      : "下线复购奖励：没有有效推荐人，不产生下线复购奖励");
     lines.push(receiver
-      ? `资格池接收人：${receiver.name} / 当前资格 ${receiver.repeatCredits} 个，将扣 1 个，奖励 ${money(poolReward)} 分 ${REPEAT_RELEASE_DAYS.length} 期释放`
-      : "资格池接收人：暂无，当前复购只给买家增加资格，不产生资格池奖励");
+      ? `奖励池接收人：${receiver.name} / 当前资格 ${receiver.repeatCredits} 个，将扣 1 个，奖励 ${money(poolReward)} 分 ${REPEAT_RELEASE_DAYS.length} 期释放`
+      : "奖励池接收人：暂无，当前复购只给买家增加资格，不产生奖励池奖励");
   } else {
     const referrer = findUser(user.referrerId);
     const reward = +(order.amount * (Number(plan.firstRate || 0) / 100)).toFixed(2);
-    lines.push(referrer ? `首充奖励：${referrer.name} 预计获得 ${money(reward)}` : "首充奖励：没有绑定推荐人");
+    lines.push(referrer ? `推荐奖励：${referrer.name} 预计获得 ${money(reward)}` : "推荐奖励：没有绑定推荐人");
   }
   lines.push("确定要确认付款吗？");
   return lines.join("\n");
@@ -1714,10 +1714,10 @@ function orderDetailText(order) {
     `确认时间：${order.reviewedAt ? new Date(order.reviewedAt).toLocaleString("zh-CN") : "-"}`,
     `取消时间：${order.cancelledAt ? new Date(order.cancelledAt).toLocaleString("zh-CN") : "-"}`,
     resolvedType === "first"
-      ? `首充奖励对象：${user.referrerId ? (findUser(user.referrerId)?.name || user.referrerId) : "无推荐人"}`
-      : `复购直推对象：${referrer ? `${referrer.name}（${isActivePackage(referrer) ? "配套有效" : "配套无效"}）` : "无推荐人"}`,
+      ? `推荐奖励对象：${user.referrerId ? (findUser(user.referrerId)?.name || user.referrerId) : "无推荐人"}`
+      : `下线复购对象：${referrer ? `${referrer.name}（${isActivePackage(referrer) ? "配套有效" : "配套无效"}）` : "无推荐人"}`,
     resolvedType === "repeat"
-      ? `资格池接收人：${receiver ? `${receiver.name}（资格 ${receiver.repeatCredits}）` : "暂无"}`
+      ? `奖励池接收人：${receiver ? `${receiver.name}（资格 ${receiver.repeatCredits}）` : "暂无"}`
       : "",
     "现有奖励记录：",
     ...rewardLines,
@@ -1775,7 +1775,7 @@ function withdrawDetailText(withdraw) {
     `打款时间：${withdraw.paidAt ? new Date(withdraw.paidAt).toLocaleString("zh-CN") : "-"}`,
     "",
     "当前奖励提现组成：",
-    `首充奖励可提现：${money(breakdown.first)}`,
+    `推荐奖励可提现：${money(breakdown.first)}`,
     `复购奖励已释放：${money(breakdown.repeatReleased)}`,
     `复购奖励待释放：${money(breakdown.pendingRelease)}`,
     `已申请/处理中：${money(breakdown.requested)}`,
@@ -1820,7 +1820,7 @@ function userDetailText(user) {
     `提现：${withdraws.length} 笔`,
     "",
     "提现组成：",
-    `首充奖励可提现：${money(breakdown.first)}`,
+    `推荐奖励可提现：${money(breakdown.first)}`,
     `复购奖励已释放：${money(breakdown.repeatReleased)}`,
     `复购奖励待释放：${money(breakdown.pendingRelease)}`,
     `已申请/处理中：${money(breakdown.requested)}`,
@@ -1843,9 +1843,9 @@ function labelStatus(status) {
 }
 
 function rewardTypeText(reward) {
-  if (reward.type === "first") return "首充奖励";
-  if (reward.rewardMode === "direct") return "复购直推奖励";
-  if (reward.rewardMode === "pool") return "复购资格池奖励";
+  if (reward.type === "first") return "推荐奖励";
+  if (reward.rewardMode === "direct") return "下线复购奖励";
+  if (reward.rewardMode === "pool") return "奖励池奖励";
   return "复购奖励";
 }
 
@@ -2043,7 +2043,7 @@ function renderMember() {
   document.querySelector("#memberPoints").textContent = points(user.points);
   document.querySelector("#memberConfirmed").textContent = money(confirmedAvailable(user.id));
   document.querySelector("#memberPoints").closest("span").title = "充值积分不可提现";
-  document.querySelector("#memberConfirmed").closest("span").title = "首充推荐奖励和复购奖励可提现";
+  document.querySelector("#memberConfirmed").closest("span").title = "推荐奖励和复购奖励可提现";
   document.querySelector("#memberSlots").textContent = `${used} / 开放`;
   document.querySelector("#memberRepeatCredits").textContent = points(user.repeatCredits || 0);
   document.querySelector("#memberPlanStatus").textContent = statusLabel;
@@ -2234,7 +2234,7 @@ function renderWithdrawBreakdown(user) {
   if (!box) return;
   const breakdown = withdrawBreakdown(user.id);
   box.innerHTML = `
-    <span>首充奖励可提现 <strong>${money(breakdown.first)}</strong></span>
+    <span>推荐奖励可提现 <strong>${money(breakdown.first)}</strong></span>
     <span>复购奖励已释放 <strong>${money(breakdown.repeatReleased)}</strong></span>
     <span>复购奖励待释放 <strong>${money(breakdown.pendingRelease)}</strong></span>
     <span>已申请/处理中 <strong>${money(breakdown.requested)}</strong></span>
@@ -2262,7 +2262,7 @@ function renderMemberPlans(user) {
       <span>发放积分：${points(plan.points)}</span>
       <span>直接推荐：开放 / 有效期：${plan.validDays} 天</span>
       <span>复购后获得资格：${planRepeatCredits(plan)} 个 / 冷却：${planRepeatCooldownHours(plan)} 小时</span>
-      <span>奖励：首充 ${plan.firstRate}% / 复购直推 ${planDirectRepeatRate(plan)}% / 资格池 ${planPoolRepeatRate(plan)}%</span>
+      <span>奖励：推荐 ${plan.firstRate}% / 下线复购 ${planDirectRepeatRate(plan)}% / 奖励池 ${planPoolRepeatRate(plan)}%</span>
       <button class="button primary" data-buy-plan="${plan.id}" data-buy-type="${nextType}">申请充值配套</button>
     </article>
   `).join("");
@@ -2323,10 +2323,10 @@ function renderRewardRules() {
   document.querySelector("#rewardRules").innerHTML = state.plans.map((plan) => `
     <article class="rule-card">
       <strong>${plan.name}</strong>
-      <span>首充奖励：下线首次购买 ${money(plan.amount)}，推荐人获得 ${money(plan.amount * plan.firstRate / 100)}。</span>
-      <span>复购直推：下线复购时，原推荐人获得 ${money(plan.amount * planDirectRepeatRate(plan) / 100)}，需推荐人配套有效。</span>
-      <span>复购资格：用户复购后获得 ${planRepeatCredits(plan)} 个资格，可接收后续资格池奖励。</span>
-      <span>资格池奖励：后续复购订单会自动派发给资格池用户，每次约 ${money(plan.amount * planPoolRepeatRate(plan) / 100)}，并扣 1 个资格。</span>
+      <span>推荐奖励：下线首次购买 ${money(plan.amount)}，推荐人获得 ${money(plan.amount * plan.firstRate / 100)}。</span>
+      <span>下线复购奖励：下线复购时，原推荐人获得 ${money(plan.amount * planDirectRepeatRate(plan) / 100)}，需推荐人配套有效。</span>
+      <span>复购资格：用户复购后获得 ${planRepeatCredits(plan)} 个资格，可接收后续奖励池奖励。</span>
+      <span>奖励池奖励：后续复购订单会自动派发给奖励池用户，每次约 ${money(plan.amount * planPoolRepeatRate(plan) / 100)}，并扣 1 个资格。</span>
       <span>奖励先待确认，${CONFIRM_DAYS} 天后由后台确认。</span>
     </article>
   `).join("");
@@ -2648,7 +2648,7 @@ function renderAdminPlans() {
     <article class="plan-card">
       <strong>${plan.name} · ${money(plan.amount)}</strong>
       <span>积分 ${points(plan.points)} / 直接推荐开放 / 复购资格 ${planRepeatCredits(plan)} 个</span>
-      <span>冷却 ${planRepeatCooldownHours(plan)} 小时 / 有效期 ${plan.validDays} 天 / 首充 ${plan.firstRate}% / 复购直推 ${planDirectRepeatRate(plan)}% / 资格池 ${planPoolRepeatRate(plan)}%</span>
+      <span>冷却 ${planRepeatCooldownHours(plan)} 小时 / 有效期 ${plan.validDays} 天 / 推荐 ${plan.firstRate}% / 下线复购 ${planDirectRepeatRate(plan)}% / 奖励池 ${planPoolRepeatRate(plan)}%</span>
       <div class="actions">
         <button class="link" type="button" data-edit-plan="${plan.id}">编辑</button>
         ${planUsed(plan.id) ? `<span class="muted-line">已有待处理或已付款订单，不能删除</span>` : `<button class="link danger-link" type="button" data-delete-plan="${plan.id}">删除</button>`}
@@ -2901,7 +2901,7 @@ function readinessChecks() {
       label: "奖励发放规则",
       detail: rewardIssues.length
         ? `${rewardIssues.length} 项奖励异常：${rewardIssues.slice(0, 2).join("；")}${rewardIssues.length > 2 ? "；..." : ""}`
-        : "首充奖励、复购直推奖励、复购资格池奖励、金额和分期释放正常",
+        : "推荐奖励、下线复购奖励、奖励池奖励、金额和分期释放正常",
     },
     {
       ok: integrityIssues.length === 0,
@@ -3023,16 +3023,16 @@ function renderAdminRiskRules() {
     {
       title: "复购奖励分期",
       rows: [
-        `复购直推奖励和资格池奖励分 ${REPEAT_RELEASE_DAYS.length} 期释放。`,
+        `下线复购奖励和奖励池奖励分 ${REPEAT_RELEASE_DAYS.length} 期释放。`,
         `释放日：第 ${REPEAT_RELEASE_DAYS.join(" / 第 ")} 天。`,
         "只有已释放金额会计入用户可提现余额。",
       ],
     },
     {
-      title: "资格池派发规则",
+      title: "奖励池派发规则",
       rows: [
-        "用户复购后获得资格，但不会接收自己这笔复购的资格池奖励。",
-        "系统优先派发给资格池中排队最早且未冻结的用户。",
+        "用户复购后获得资格，但不会接收自己这笔复购的奖励池奖励。",
+        "系统优先派发给奖励池中排队最早且未冻结的用户。",
         "派发成功后接收人扣 1 个复购资格。",
       ],
     },
@@ -3046,7 +3046,7 @@ function renderAdminRiskRules() {
         ].filter(Boolean)
         : [
           `<b class="check-ok">奖励发放规则正常</b>`,
-          "首充奖励、复购直推奖励、复购资格池奖励、金额和分期释放未发现异常。",
+          "推荐奖励、下线复购奖励、奖励池奖励、金额和分期释放未发现异常。",
         ],
     },
     {
@@ -3410,7 +3410,7 @@ function exportFinanceSummary() {
       ["充值订单", "已支付充值", paidOrders.length, sumRows(paidOrders, (order) => order.amount), "已确认付款的订单总额"],
       ["充值订单", "待审核充值", pendingOrders.length, sumRows(pendingOrders, (order) => order.amount), "用户已提交但后台未确认"],
       ["充值订单", "已取消/退款", cancelledOrders.length, sumRows(cancelledOrders, (order) => order.amount), "不计入有效充值"],
-      ["奖励", "已确认首充奖励", confirmedFirstRewards.length, sumRows(confirmedFirstRewards, (reward) => reward.amount), "可进入提现余额"],
+      ["奖励", "已确认推荐奖励", confirmedFirstRewards.length, sumRows(confirmedFirstRewards, (reward) => reward.amount), "可进入提现余额"],
       ["奖励", "已释放复购奖励", repeatRewards.length, sumRows(repeatRewards, (reward) => reward.releasedAmount || (reward.status === "confirmed" ? reward.amount : 0)), "已释放部分可提现"],
       ["奖励", "待确认奖励", pendingRewards.length, sumRows(pendingRewards, (reward) => reward.amount), "等待确认日或管理员处理"],
       ["奖励", "分期中待释放", releasingRewards.length, sumRows(releasingRewards, (reward) => Number(reward.amount || 0) - Number(reward.releasedAmount || 0)), "复购奖励剩余未释放"],
@@ -3419,7 +3419,7 @@ function exportFinanceSummary() {
       ["提现", "已通过待打款", approvedWithdraws.length, sumRows(approvedWithdraws, (withdraw) => withdraw.amount), "已审核通过但未标记打款"],
       ["提现", "已打款提现", paidoutWithdraws.length, sumRows(paidoutWithdraws, (withdraw) => withdraw.amount), "已经标记打款"],
       ["提现", "已拒绝提现", rejectedWithdraws.length, sumRows(rejectedWithdraws, (withdraw) => withdraw.amount), "不扣除可提现余额"],
-      ["用户余额", "当前全体可提现余额", users.length, sumRows(userBreakdowns, (item) => item.available), "首充奖励可提现 + 复购奖励已释放 - 申请/处理中"],
+      ["用户余额", "当前全体可提现余额", users.length, sumRows(userBreakdowns, (item) => item.available), "推荐奖励可提现 + 复购奖励已释放 - 申请/处理中"],
       ["用户余额", "复购奖励待释放", users.length, sumRows(userBreakdowns, (item) => item.pendingRelease), "未来可能释放的复购奖励"],
     ]
   );
@@ -4203,7 +4203,7 @@ document.querySelector("#exportPlansBtn")?.addEventListener("click", async () =>
   if (!requireAdmin()) return;
   downloadCsv(
     `amsystem-plans-${exportStamp()}.csv`,
-    ["配套ID", "配套名称", "金额", "发放积分", "推荐名额", "复购资格", "复购冷却小时", "有效期天数", "首充奖励%", "直推复购奖励%", "资格池复购奖励%", "是否已有订单使用"],
+    ["配套ID", "配套名称", "金额", "发放积分", "推荐名额", "复购资格", "复购冷却小时", "有效期天数", "推荐奖励%", "下线复购奖励%", "奖励池奖励%", "是否已有订单使用"],
     (state.plans || []).map((plan) => [
       plan.id,
       plan.name,
@@ -4254,7 +4254,7 @@ document.querySelector("#exportOrdersBtn")?.addEventListener("click", () => {
   if (!requireAdmin()) return;
   downloadCsv(
     `amsystem-orders-${exportStamp()}.csv`,
-    ["订单号", "用户", "配套", "类型", "金额", "锁定积分", "锁定推荐名额记录", "锁定有效天数", "锁定首充比例", "锁定直推复购比例", "锁定资格池复购比例", "锁定复购资格", "锁定冷却小时", "付款方式", "付款参考号", "凭证状态", "风险提示", "状态", "处理备注", "处理结果", "申请时间", "确认时间", "取消时间"],
+    ["订单号", "用户", "配套", "类型", "金额", "锁定积分", "锁定推荐名额记录", "锁定有效天数", "锁定推荐奖励比例", "锁定下线复购比例", "锁定奖励池比例", "锁定复购资格", "锁定冷却小时", "付款方式", "付款参考号", "凭证状态", "风险提示", "状态", "处理备注", "处理结果", "申请时间", "确认时间", "取消时间"],
     filteredOrders().map((order) => {
       const user = findUser(order.userId);
       const plan = orderPlan(order);
@@ -4326,7 +4326,7 @@ document.querySelector("#exportWithdrawsBtn")?.addEventListener("click", () => {
   if (!requireAdmin()) return;
   downloadCsv(
     `amsystem-withdraws-${exportStamp()}.csv`,
-    ["提现ID", "用户", "金额", "来源", "方式", "账号", "首充奖励可提现", "复购奖励已释放", "复购奖励待释放", "已申请/处理中", "当前可提现余额", "风险提示", "状态", "审核备注", "申请时间", "审核时间", "打款时间"],
+    ["提现ID", "用户", "金额", "来源", "方式", "账号", "推荐奖励可提现", "复购奖励已释放", "复购奖励待释放", "已申请/处理中", "当前可提现余额", "风险提示", "状态", "审核备注", "申请时间", "审核时间", "打款时间"],
     filteredWithdraws().map((item) => {
       const user = findUser(item.userId);
       const breakdown = user ? withdrawBreakdown(user.id) : {};
@@ -5031,6 +5031,8 @@ setTimeout(() => {
     setSyncStatusText("Firestore：尚未开始检测");
   }
 }, 5000);
+
+
 
 
 
