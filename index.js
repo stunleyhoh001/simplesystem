@@ -172,12 +172,9 @@ exports.confirmOrder = onCall(async (request) => {
     const paidAt = new Date().toISOString();
     const pointChange = Number(plan.points || 0);
     const newBalance = Number(buyer.points || 0) + pointChange;
-    const earnedRepeatCredits = actualType === "repeat" ? planRepeatCredits(plan) : 0;
     const currentRepeatCredits = Number(buyer.repeatCredits || 0);
-    const nextRepeatCredits = currentRepeatCredits + earnedRepeatCredits;
-    const buyerQueueAt = earnedRepeatCredits > 0 && (!buyer.repeatCreditQueueAt || currentRepeatCredits <= 0)
-      ? paidAt
-      : (buyer.repeatCreditQueueAt || "");
+    const nextRepeatCredits = currentRepeatCredits;
+    const buyerQueueAt = buyer.repeatCreditQueueAt || "";
 
     let referrerSnap = null;
     if (buyer.referrerId) {
@@ -220,18 +217,6 @@ exports.confirmOrder = onCall(async (request) => {
       level: Number(plan.amount || 0) >= 580 ? "高级推广用户" : "推广用户",
       updatedAt: admin.firestore.FieldValue.serverTimestamp(),
     }, { merge: true });
-
-    if (earnedRepeatCredits > 0) {
-      createRepeatCreditLog(tx, {
-        userId: order.userId,
-        change: earnedRepeatCredits,
-        balance: nextRepeatCredits,
-        reason: "earned",
-        source: order.id,
-        note: `${plan.name} repeat purchase`,
-        createdAt: paidAt,
-      });
-    }
 
     const pointLogRef = db.collection("amsystemPointLogs").doc();
     tx.set(pointLogRef, {
