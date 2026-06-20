@@ -4,7 +4,7 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>简单的联盟营销系统</title>
-    <link rel="stylesheet" href="./styles.css?v=20260619-65" />
+    <link rel="stylesheet" href="./styles.css?v=20260620-66" />
   </head>
   <body>
     <header class="app-header">
@@ -212,7 +212,7 @@
               <label>充值金额 RM<input name="amount" type="number" min="1" step="1" required /></label>
               <label>发放积分<input name="points" type="number" min="0" step="1" required /></label>
               <label>推荐名额（开放后仅记录）<input name="slots" type="number" min="0" step="1" required /></label>
-              <label>奖励池资格记录<input name="repeatCredits" type="number" min="0" step="1" value="10" required /></label>
+              <label>奖励池资格上限<input name="repeatCredits" type="number" min="0" max="10" step="1" value="10" required /></label>
               <label>有效期天数<input name="validDays" type="number" min="1" step="1" required /></label>
               <label>推荐奖励 %<input name="firstRate" type="number" min="0" max="100" step="0.1" required /></label>
               <label>下线复购奖励 %<input name="directRepeatRate" type="number" min="0" max="100" step="0.1" value="10" required /></label>
@@ -502,7 +502,7 @@
     </main>
 
     <div id="toast" class="toast" role="status" aria-live="polite"></div>
-    <script type="module" src="./app.js?v=20260619-65"></script>
+    <script type="module" src="./app.js?v=20260620-66"></script>
   </body>
 </html>
 

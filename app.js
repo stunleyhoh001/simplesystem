@@ -26,11 +26,12 @@ import {
 } from "https://www.gstatic.com/firebasejs/10.12.5/firebase-storage.js";
 
 const STORAGE_KEY = "amsystemFirebaseFallback";
-const APP_VERSION = "20260619-65";
+const APP_VERSION = "20260620-66";
 const PUBLIC_SITE_URL = "https://stunleyhoh001.github.io/simplesystem/";
 const TEST_CHECKLIST_KEY = "amsystemTestChecklist";
 const DEPLOY_CHECKLIST_KEY = "amsystemDeployChecklist";
 const TEST_INSTANT_MODE = true;
+const MAX_REPEAT_POOL_CREDITS = 10;
 const WITHDRAW_COOLDOWN_HOURS = TEST_INSTANT_MODE ? 0 : 24;
 const SYSTEM_DOC_PATH = ["amsystem", "main"];
 const USER_COLLECTION = "amsystemUsers";
@@ -393,7 +394,11 @@ async function saveState() {
   try {
     const cloudState = splitStateForCloud(state);
     if (isAdmin()) {
-      await setDoc(systemRef, { plans: cloudState.plans, testDataClearedAt: cloudState.testDataClearedAt || "", updatedAt: serverTimestamp() });
+      await setDoc(systemRef, {
+        plans: cloudState.plans,
+        testDataClearedAt: cloudState.testDataClearedAt || "",
+        updatedAt: serverTimestamp(),
+      });
       await Promise.all([
         syncAdminCollection(usersRef, cloudState.users),
         syncAdminCollection(ordersRef, cloudState.orders),
@@ -1042,6 +1047,8 @@ function prepareLoadedState(data) {
   }
   data = filterBusinessRecordsAfterClear(data);
   cleanupAutoRepeatCreditGrants(data);
+  syncReferralPoolCredits(data);
+  capRepeatPoolCredits(data);
   backfillOrderPlanSnapshots(data);
   return data;
 }
@@ -1065,6 +1072,22 @@ function cleanupAutoRepeatCreditGrants(data) {
   data.autoRepeatCreditCleanupAt = data.autoRepeatCreditCleanupAt || new Date().toISOString();
 }
 
+function syncReferralPoolCredits(data) {
+  const referrals = referralDocsForState(data)
+    .filter((referral) => referral.referrerId && referral.inviteeId)
+    .sort((a, b) => new Date(a.createdAt || "9999-12-31") - new Date(b.createdAt || "9999-12-31"));
+  referrals.forEach((referral) => {
+    grantReferralPoolCredit(data, referral.referrerId, referral.inviteeId, referral.createdAt || new Date().toISOString());
+  });
+}
+
+function capRepeatPoolCredits(data) {
+  (data.users || []).forEach((user) => {
+    user.repeatCredits = Math.max(Math.min(Number(user.repeatCredits || 0), MAX_REPEAT_POOL_CREDITS), 0);
+    if (user.repeatCredits <= 0) user.repeatCreditQueueAt = "";
+  });
+}
+
 function orderPlanSummary(plan) {
   if (!plan) return "-";
   return [
@@ -1074,7 +1097,7 @@ function orderPlanSummary(plan) {
     `推荐奖励 ${Number(plan.firstRate || 0)}%`,
     `下线复购 ${planDirectRepeatRate(plan)}%`,
     `奖励池 ${planPoolRepeatRate(plan)}%`,
-    `资格 ${planRepeatCredits(plan)} 个`,
+    `奖励池资格每推荐 1 人解锁，上限 ${MAX_REPEAT_POOL_CREDITS} 个`,
     `冷却 ${planRepeatCooldownHours(plan)} 小时`,
   ].join(" / ");
 }
@@ -1120,6 +1143,45 @@ function directReferralCount(userId, data = state) {
     .filter((user) => user.referrerId === userId)
     .forEach((user) => referralIds.add(user.id));
   return referralIds.size;
+}
+
+function referralPoolCreditSource(referrerId, inviteeId) {
+  return `referral:${referrerId}_${inviteeId}`;
+}
+
+function referralPoolUnlockCount(userId, data = state) {
+  return (data.repeatCreditLogs || [])
+    .filter((log) => log.userId === userId && log.reason === "referral" && Number(log.change || 0) > 0)
+    .length;
+}
+
+function grantReferralPoolCredit(data, referrerId, inviteeId, createdAt = new Date().toISOString()) {
+  const referrer = (data.users || []).find((user) => user.id === referrerId);
+  const invitee = (data.users || []).find((user) => user.id === inviteeId);
+  if (!referrer || referrer.id === inviteeId) return false;
+  const source = referralPoolCreditSource(referrerId, inviteeId);
+  const alreadyGranted = (data.repeatCreditLogs || []).some((log) =>
+    log.userId === referrerId && log.reason === "referral" && log.source === source
+  );
+  if (alreadyGranted) return false;
+  if (referralPoolUnlockCount(referrerId, data) >= MAX_REPEAT_POOL_CREDITS) return false;
+  const before = Number(referrer.repeatCredits || 0);
+  if (before >= MAX_REPEAT_POOL_CREDITS) return false;
+  referrer.repeatCredits = Math.min(before + 1, MAX_REPEAT_POOL_CREDITS);
+  if (referrer.repeatCredits > 0 && before <= 0) {
+    referrer.repeatCreditQueueAt = createdAt;
+  }
+  addRepeatCreditLog(
+    data,
+    referrer.id,
+    referrer.repeatCredits - before,
+    referrer.repeatCredits,
+    "referral",
+    source,
+    `直接推荐解锁：${invitee?.name || invitee?.account || invitee?.inviteCode || inviteeId}`,
+    createdAt
+  );
+  return true;
 }
 
 function isActivePackage(user) {
@@ -2347,7 +2409,7 @@ function renderMemberPlans(user) {
       <strong>${plan.name} · ${money(plan.amount)}</strong>
       <span>发放积分：${points(plan.points)}</span>
       <span>直接推荐：开放 / 有效期：${plan.validDays} 天</span>
-      <span>奖励池资格：由后台调整或奖励池派发扣除 / 冷却：${planRepeatCooldownHours(plan)} 小时</span>
+      <span>奖励池资格：每直接推荐 1 人解锁 1 个，最多 ${MAX_REPEAT_POOL_CREDITS} 个 / 冷却：${planRepeatCooldownHours(plan)} 小时</span>
       <span>奖励：推荐 ${plan.firstRate}% / 下线复购 ${planDirectRepeatRate(plan)}% / 奖励池 ${planPoolRepeatRate(plan)}%</span>
       <button class="button primary" data-buy-plan="${plan.id}" data-buy-type="${nextType}">申请充值配套</button>
     </article>
@@ -2423,7 +2485,7 @@ function renderRewardRules() {
       <strong>${plan.name}</strong>
       <span>推荐奖励：下线首次购买 ${money(plan.amount)}，推荐人获得 ${money(plan.amount * plan.firstRate / 100)}。</span>
       <span>下线复购奖励：下线复购时，原推荐人获得 ${money(plan.amount * planDirectRepeatRate(plan) / 100)}，需推荐人配套有效。</span>
-      <span>奖励池资格：拥有资格的用户可接收后续奖励池奖励；派发成功扣 1 个资格。</span>
+      <span>奖励池资格：每直接推荐 1 人解锁 1 个，最多 ${MAX_REPEAT_POOL_CREDITS} 个；派发成功扣 1 个资格。</span>
       <span>奖励池奖励：后续复购订单会自动派发给奖励池用户，每次约 ${money(plan.amount * planPoolRepeatRate(plan) / 100)}，并扣 1 个资格。</span>
       <span>${TEST_INSTANT_MODE ? "测试期奖励即时确认/释放，方便连续测试。" : `奖励先待确认，${CONFIRM_DAYS} 天后由后台确认。`}</span>
     </article>
@@ -2700,7 +2762,7 @@ function planFromForm(form) {
     amount: Number(form.get("amount")),
     points: Number(form.get("points")),
     slots: Number(form.get("slots")),
-    repeatCredits: Number(form.get("repeatCredits")),
+    repeatCredits: Math.min(Number(form.get("repeatCredits")), MAX_REPEAT_POOL_CREDITS),
     repeatCooldownHours: Number(form.get("repeatCooldownHours") || 0),
     validDays: Number(form.get("validDays")),
     firstRate: Number(form.get("firstRate")),
@@ -2744,7 +2806,7 @@ function renderAdminPlans() {
   document.querySelector("#adminPlanList").innerHTML = state.plans.map((plan) => `
     <article class="plan-card">
       <strong>${plan.name} · ${money(plan.amount)}</strong>
-      <span>积分 ${points(plan.points)} / 直接推荐开放 / 奖励池资格记录 ${planRepeatCredits(plan)} 个</span>
+      <span>积分 ${points(plan.points)} / 直接推荐开放 / 奖励池资格上限 ${MAX_REPEAT_POOL_CREDITS} 个</span>
       <span>冷却 ${planRepeatCooldownHours(plan)} 小时 / 有效期 ${plan.validDays} 天 / 推荐 ${plan.firstRate}% / 下线复购 ${planDirectRepeatRate(plan)}% / 奖励池 ${planPoolRepeatRate(plan)}%</span>
       <div class="actions">
         <button class="link" type="button" data-edit-plan="${plan.id}">编辑</button>
@@ -2773,6 +2835,7 @@ function renderAdminUsers() {
 function repeatCreditReasonText(reason) {
   return {
     earned: "资格获得",
+    referral: "推荐解锁",
     used: "资格扣除",
     admin: "后台调整",
   }[reason] || reason || "-";
@@ -2803,6 +2866,7 @@ function ensureRepeatCreditLogFilters() {
       <select id="repeatLogReasonFilter">
         <option value="all">全部原因</option>
         <option value="earned">资格获得</option>
+        <option value="referral">推荐解锁</option>
         <option value="used">资格扣除</option>
         <option value="admin">后台调整</option>
       </select>
@@ -3128,7 +3192,7 @@ function renderAdminRiskRules() {
     {
       title: "奖励池派发规则",
       rows: [
-        "用户拥有奖励池资格时，可接收后续复购产生的奖励池奖励；买家不会接收自己这笔复购的奖励池奖励。",
+        `用户每直接推荐 1 人解锁 1 个奖励池资格，最多 ${MAX_REPEAT_POOL_CREDITS} 个；买家不会接收自己这笔复购的奖励池奖励。`,
         "系统优先派发给奖励池中排队最早且未冻结的用户。",
         "派发成功后接收人扣 1 个奖励池资格。",
       ],
@@ -4496,10 +4560,11 @@ document.querySelector("#registerForm").addEventListener("submit", async (event)
   if (invite.frozen) return toast("推荐人账号暂不可绑定");
   user.referrerId = invite.userId;
   state.referrals = referralDocsForState(state);
+  const unlocked = grantReferralPoolCredit(state, invite.userId, user.id);
   await saveState();
   formEl.reset();
   renderAll();
-  toast("推荐人已绑定");
+  toast(unlocked ? "推荐人已绑定，推荐人已解锁 1 个奖励池资格" : "推荐人已绑定");
 });
 
 document.querySelector("#planForm").addEventListener("submit", async (event) => {
@@ -4553,19 +4618,24 @@ document.querySelector("#repeatCreditsForm").addEventListener("submit", async (e
   const change = Number(form.get("credits"));
   if (!user || Number.isNaN(change)) return toast("奖励池资格调整无效");
   const before = Number(user.repeatCredits || 0);
-  user.repeatCredits = Math.max(before + change, 0);
+  user.repeatCredits = Math.max(Math.min(before + change, MAX_REPEAT_POOL_CREDITS), 0);
   if (user.repeatCredits > 0 && before <= 0) {
     user.repeatCreditQueueAt = new Date().toISOString();
   }
   if (user.repeatCredits <= 0) {
     user.repeatCreditQueueAt = "";
   }
-  addAdminLog("调整奖励池资格", user.name, `变动 ${change}，当前 ${user.repeatCredits}，备注：${form.get("note").trim()}`);
-  addRepeatCreditLog(state, user.id, user.repeatCredits - before, user.repeatCredits, "admin", "admin", form.get("note").trim());
+  const actualChange = user.repeatCredits - before;
+  addAdminLog("调整奖励池资格", user.name, `申请变动 ${change}，实际变动 ${actualChange}，当前 ${user.repeatCredits}，备注：${form.get("note").trim()}`);
+  if (actualChange !== 0) {
+    addRepeatCreditLog(state, user.id, actualChange, user.repeatCredits, "admin", "admin", form.get("note").trim());
+  }
   event.currentTarget.reset();
   await saveState();
   renderAll();
-  toast("奖励池资格已调整");
+  toast(user.repeatCredits === MAX_REPEAT_POOL_CREDITS && before + change > MAX_REPEAT_POOL_CREDITS
+    ? `奖励池资格已调整，最多只能保留 ${MAX_REPEAT_POOL_CREDITS} 个`
+    : "奖励池资格已调整");
 });
 
 document.querySelector("#withdrawForm").addEventListener("submit", async (event) => {
